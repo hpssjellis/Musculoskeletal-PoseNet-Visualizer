@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biomechanical PoseNet & 3D Muscle Actuator Visualizer</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- TensorFlow.js Core & PoseNet -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
+    
+    <!-- Three.js & OrbitControls -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: #0b0f19;
+            color: #e2e8f0;
+            overflow-x: hidden;
+        }
+
+        /* Glassmorphism panel styling */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        /* Video element mirroring */
+        .mirror {
+            transform: scaleX(-1);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 23, 42, 0.6);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen flex flex-col m-0 p-0 overflow-hidden">
+
+    <!-- Header Navigation -->
+    <header class="h-16 border-b border-slate-800 bg-slate-950/80 px-6 flex items-center justify-between shrink-0 z-20">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-indigo-600/20 rounded-xl border border-indigo-500/30 text-indigo-400">
+                <i class="fa-solid font-bold fa-child-reaching text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
+                    MS-BioActuator 3D & PoseNet AI
+                </h1>
+                <p class="text-xs text-slate-400">Real-Time Musculoskeletal Actuator & Kinematics Engine</p>
+            </div>
+        </div>
+
+        <!-- System Controls & Metrics Badge -->
+        <div class="flex items-center gap-4">
+            <div class="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" id="status-indicator"></span>
+                    <span id="status-text" class="text-slate-300 font-medium">Model Loading...</span>
+                </div>
+                <span class="text-slate-600">|</span>
+                <span class="text-slate-400">FPS: <strong id="fps-counter" class="text-indigo-400 font-mono">00</strong></span>
+            </div>
+            
+            <button id="toggle-camera-btn" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-lg shadow-indigo-600/20 transition duration-200">
+                <i class="fa-solid fa-video"></i>
+                <span id="camera-btn-text">Start Camera</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Content Grid Layout -->
+    <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 min-h-0 relative">
+
+        <!-- Left/Top Sidebar - Camera & 2D PoseNet Stream -->
+        <div class="lg:col-span-4 flex flex-col gap-4 min-h-0 h-full">
+            
+            <!-- Camera / Pose Canvas Card -->
+            <div class="glass-panel rounded-2xl p-3 flex flex-col relative overflow-hidden flex-1 min-h-[260px]">
+                <div class="flex justify-between items-center mb-2 px-1">
+                    <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                        <i class="fa-solid fa-camera text-indigo-400"></i> PoseNet Input Stream
+                    </span>
+                    <span id="confidence-score" class="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-indigo-300">
+                        Score: 0.00
+                    </span>
+                </div>
+
+                <!-- Video / Canvas Overlay Container -->
+                <div class="relative w-full flex-1 bg-black/60 rounded-xl overflow-hidden flex items-center justify-center border border-slate-800/80">
+                    <video id="webcam-video" class="absolute w-full h-full object-cover mirror hidden" playsinline muted></video>
+                    <canvas id="pose-canvas" class="absolute w-full h-full object-cover mirror z-10"></canvas>
+                    
+                    <!-- Fallback / Empty Overlay Message -->
+                    <div id="video-placeholder" class="text-center p-6 text-slate-500 flex flex-col items-center gap-3">
+                        <i class="fa-solid fa-user-gear text-4xl text-slate-600 animate-bounce"></i>
+                        <p class="text-xs max-w-[220px]">Click "Start Camera" or select a preset motion below to drive the 3D Muscular Engine.</p>
+                    </div>
+                </div>
+
+                <!-- Webcam Overlay Controls -->
+                <div class="mt-3 flex items-center justify-between gap-2 px-1 text-xs">
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
+                        <input type="checkbox" id="toggle-skeleton-overlay" checked class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-slate-900">
+                        Show Skeleton Overlay
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
+                        <input type="checkbox" id="toggle-points-overlay" checked class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500 focus:ring-offset-slate-900">
+                        Keypoints
+                    </label>
+                </div>
+            </div>
+
+            <!-- Kinematics telemetry panel -->
+            <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
+                <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                    <i class="fa-solid fa-gauge-high text-pink-400"></i> Joint Flexion Kinematics
+                </h3>
+                <div class="grid grid-cols-2 gap-2 text-xs font-mono">
+                    <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Elbow Angle</div>
+                        <div class="text-slate-200 mt-1 flex justify-between">
+                            <span id="angle-left-elbow" class="text-indigo-400">0°</span>
+                            <span id="angle-right-elbow" class="text-pink-400">0°</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Knee Angle</div>
+                        <div class="text-slate-200 mt-1 flex justify-between">
+                            <span id="angle-left-knee" class="text-indigo-400">0°</span>
+                            <span id="angle-right-knee" class="text-pink-400">0°</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Shoulder Flex</div>
+                        <div class="text-slate-200 mt-1 flex justify-between">
+                            <span id="angle-left-shoulder" class="text-indigo-400">0°</span>
+                            <span id="angle-right-shoulder" class="text-pink-400">0°</span>
+                        </div>
+                    </div>
+                    <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Hip Flexion</div>
+                        <div class="text-slate-200 mt-1 flex justify-between">
+                            <span id="angle-left-hip" class="text-indigo-400">0°</span>
+                            <span id="angle-right-hip" class="text-pink-400">0°</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Controls & Presets Panel -->
+            <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
+                <div class="flex justify-between items-center">
+                    <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                        <i class="fa-solid fa-sliders text-purple-400"></i> Visual Engine & Presets
+                    </h3>
+                </div>
+
+                <!-- Simulation mode buttons -->
+                <div class="grid grid-cols-3 gap-2">
+                    <button id="preset-idle" class="preset-btn bg-indigo-600/30 border border-indigo-500/50 hover:bg-indigo-600/50 text-indigo-200 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                        T-Pose
+                    </button>
+                    <button id="preset-squat" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                        Squat Cycle
+                    </button>
+                    <button id="preset-curl" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                        Bicep Curl
+                    </button>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-slate-800/80 pt-2.5 mt-1">
+                    <span class="text-xs text-slate-300">Actuator Heatmap Glow</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggle-heatmap" checked class="sr-only peer">
+                        <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-pink-500"></div>
+                    </label>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Right/Main View - 3D Musculoskeletal Actuator Stage -->
+        <div class="lg:col-span-8 glass-panel rounded-2xl flex flex-col relative overflow-hidden h-full min-h-[450px]">
+            
+            <!-- 3D View Controls Overlay -->
+            <div class="absolute top-4 left-4 z-10 flex items-center gap-2 bg-slate-950/70 border border-slate-800 px-3 py-1.5 rounded-xl text-xs backdrop-blur-md">
+                <i class="fa-solid fa-cube text-indigo-400"></i>
+                <span class="font-medium text-slate-300">MS-700 Biomechanical Model</span>
+                <span class="text-slate-600">|</span>
+                <span class="text-slate-400 text-[11px]" id="actuator-count">36 Core Muscle Groups</span>
+            </div>
+
+            <!-- Visual Legend -->
+            <div class="absolute top-4 right-4 z-10 flex items-center gap-3 bg-slate-950/70 border border-slate-800 px-3 py-1.5 rounded-xl text-[11px] backdrop-blur-md text-slate-300">
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span>
+                    <span>Resting / Extended</span>
+                </div>
+                <div class="flex items-center gap-1.5">
+                    <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span>
+                    <span>High Tension Contraction</span>
+                </div>
+            </div>
+
+            <!-- Three.js Canvas Container -->
+            <div id="three-container" class="w-full h-full cursor-grab active:cursor-grabbing"></div>
+
+            <!-- Bottom Camera Controls Instructions -->
+            <div class="absolute bottom-4 left-4 right-4 z-10 pointer-events-none flex justify-between items-end">
+                <div class="bg-slate-950/80 border border-slate-800/80 p-2.5 rounded-xl text-[11px] text-slate-400 backdrop-blur-md pointer-events-auto">
+                    <i class="fa-solid fa-hand-pointer text-indigo-400 mr-1"></i> Orbit: Left Click + Drag | Pan: Right Click | Zoom: Scroll
+                </div>
+                
+                <!-- Reset Camera Button -->
+                <button id="reset-cam-btn" class="pointer-events-auto bg-slate-900/90 border border-slate-800 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs backdrop-blur-md transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-rotate-right"></i> Reset View
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- Main Logic Script -->
+    <script>
+        // Global Application State
+        const state = {
+            net: null,
+            webcamStream: null,
+            isCameraActive: false,
+            showSkeleton: true,
+            showPoints: true,
+            heatmapEnabled: true,
+            activePreset: 'idle', // 'idle', 'squat', 'curl'
+            presetFrame: 0,
+            fps: 0,
+            lastFrameTime: performance.now(),
+            jointAngles: {
+                leftElbow: 180, rightElbow: 180,
+                leftKnee: 180, rightKnee: 180,
+                leftShoulder: 0, rightShoulder: 0,
+                leftHip: 0, rightHip: 0
+            }
+        };
+
+        // DOM Elements
+        const webcamVideo = document.getElementById('webcam-video');
+        const poseCanvas = document.getElementById('pose-canvas');
+        const canvasCtx = poseCanvas.getContext('2d');
+        const toggleCamBtn = document.getElementById('toggle-camera-btn');
+        const cameraBtnText = document.getElementById('camera-btn-text');
+        const statusText = document.getElementById('status-text');
+        const statusIndicator = document.getElementById('status-indicator');
+        const fpsCounter = document.getElementById('fps-counter');
+        const confidenceScoreEl = document.getElementById('confidence-score');
+        const videoPlaceholder = document.getElementById('video-placeholder');
+
+        // Angle Display Elements
+        const anglesEl = {
+            leftElbow: document.getElementById('angle-left-elbow'),
+            rightElbow: document.getElementById('angle-right-elbow'),
+            leftKnee: document.getElementById('angle-left-knee'),
+            rightKnee: document.getElementById('angle-right-knee'),
+            leftShoulder: document.getElementById('angle-left-shoulder'),
+            rightShoulder: document.getElementById('angle-right-shoulder'),
+            leftHip: document.getElementById('angle-left-hip'),
+            rightHip: document.getElementById('angle-right-hip')
+        };
+
+        // Initialize PoseNet Model
+        async function initPoseNet() {
+            try {
+                statusText.innerText = 'Loading PoseNet...';
+                state.net = await posenet.load({
+                    architecture: 'MobileNetV1',
+                    outputStride: 16,
+                    inputResolution: { width: 320, height: 240 },
+                    multiplier: 0.75
+                });
+                statusText.innerText = 'PoseNet Ready';
+                statusIndicator.classList.remove('bg-amber-500');
+                statusIndicator.classList.add('bg-emerald-500');
+            } catch (err) {
+                console.error("Failed to load PoseNet:", err);
+                statusText.innerText = 'Model Load Failed';
+                statusIndicator.classList.remove('bg-emerald-500');
+                statusIndicator.classList.add('bg-rose-500');
+            }
+        }
+
+        // Toggle Camera Setup
+        async function toggleCamera() {
+            if (state.isCameraActive) {
+                stopCamera();
+            } else {
+                await startCamera();
+            }
+        }
+
+        async function startCamera() {
+            try {
+                state.webcamStream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: 640, height: 480 },
+                    audio: false
+                });
+                webcamVideo.srcObject = state.webcamStream;
+                await webcamVideo.play();
+
+                webcamVideo.classList.remove('hidden');
+                videoPlaceholder.classList.add('hidden');
+                state.isCameraActive = true;
+                state.activePreset = null; // Disable animation preset if webcam active
+                updatePresetButtons(null);
+
+                cameraBtnText.innerText = 'Stop Camera';
+                toggleCamBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-500');
+                toggleCamBtn.classList.add('bg-rose-600', 'hover:bg-rose-500');
+            } catch (err) {
+                console.error("Camera access denied/failed:", err);
+                alert("Could not access webcam. Please ensure permission is granted.");
+            }
+        }
+
+        function stopCamera() {
+            if (state.webcamStream) {
+                state.webcamStream.getTracks().forEach(track => track.stop());
+                state.webcamStream = null;
+            }
+            webcamVideo.classList.add('hidden');
+            videoPlaceholder.classList.remove('hidden');
+            state.isCameraActive = false;
+
+            cameraBtnText.innerText = 'Start Camera';
+            toggleCamBtn.classList.remove('bg-rose-600', 'hover:bg-rose-500');
+            toggleCamBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-500');
+
+            // Default back to idle pose
+            state.activePreset = 'idle';
+            updatePresetButtons('idle');
+        }
+
+        // ==========================================
+        // THREE.JS 3D MUSCULOSKELETAL AVATAR ENGINE
+        // ==========================================
+
+        let scene, camera, renderer, controls;
+        let joints = {};      // Joint 3D Mesh Pivots
+        let muscles = [];     // Array of Muscle Actuator Objects { mesh, origin, insertion, tension, restLength }
+
+        function initThreeJS() {
+            const container = document.getElementById('three-container');
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            // Scene setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x0b0f19);
+            scene.fog = new THREE.FogExp2(0x0b0f19, 0.035);
+
+            // Camera setup
+            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
+            camera.position.set(0, 1.2, 3.8);
+
+            // Renderer setup
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Orbit Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.target.set(0, 0.9, 0);
+
+            // Lighting Setup
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const mainDirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            mainDirLight.position.set(3, 8, 5);
+            mainDirLight.castShadow = true;
+            scene.add(mainDirLight);
+
+            const blueRimLight = new THREE.PointLight(0x38bdf8, 1.2, 10);
+            blueRimLight.position.set(-3, 2, -2);
+            scene.add(blueRimLight);
+
+            const magentaRimLight = new THREE.PointLight(0xec4899, 1.2, 10);
+            magentaRimLight.position.set(3, 1, -2);
+            scene.add(magentaRimLight);
+
+            // Ground Grid
+            const grid = new THREE.GridHelper(10, 20, 0x334155, 0x1e293b);
+            grid.position.y = 0;
+            scene.add(grid);
+
+            // Construct 3D Musculoskeletal Skeleton & Muscle Actuators
+            buildMusculoskeletalModel();
+
+            // Resize Event Listener
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function onWindowResize() {
+            const container = document.getElementById('three-container');
+            if (!container) return;
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Helper to Create Skeletal Bone Segments
+        function createBoneMesh(length, radius = 0.035) {
+            const group = new THREE.Group();
+            const geometry = new THREE.CylinderGeometry(radius * 0.8, radius, length, 12);
+            geometry.translate(0, -length / 2, 0); // Pivot point at top of bone
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x94a3b8,
+                roughness: 0.4,
+                metalness: 0.2
+            });
+            const bone = new THREE.Mesh(geometry, material);
+            bone.castShadow = true;
+            group.add(bone);
+            return group;
+        }
+
+        // Construct Hierarchical Joint Skeleton & Actuator Anchors
+        function buildMusculoskeletalModel() {
+            const boneMaterial = new THREE.MeshStandardMaterial({ color: 0xc0caf5, roughness: 0.3 });
+
+            // Root / Pelvis
+            joints.pelvis = new THREE.Group();
+            joints.pelvis.position.set(0, 0.9, 0);
+            scene.add(joints.pelvis);
+
+            // Pelvis Visual Marker
+            const pelvisMesh = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.16), boneMaterial);
+            joints.pelvis.add(pelvisMesh);
+
+            // Spine / Torso
+            joints.spine = createBoneMesh(0.45, 0.045);
+            joints.pelvis.add(joints.spine);
+
+            // Chest / Shoulders
+            joints.chest = new THREE.Group();
+            joints.chest.position.set(0, 0.45, 0);
+            joints.spine.add(joints.chest);
+
+            const chestMesh = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.18), boneMaterial);
+            joints.chest.add(chestMesh);
+
+            // Head
+            const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), boneMaterial);
+            headMesh.position.set(0, 0.22, 0);
+            joints.chest.add(headMesh);
+
+            // Left Arm Hierarchy
+            joints.leftShoulder = new THREE.Group();
+            joints.leftShoulder.position.set(0.2, 0.02, 0);
+            joints.chest.add(joints.leftShoulder);
+
+            joints.leftUpperArm = createBoneMesh(0.3, 0.03);
+            joints.leftShoulder.add(joints.leftUpperArm);
+
+            joints.leftElbow = new THREE.Group();
+            joints.leftElbow.position.set(0, -0.3, 0);
+            joints.leftUpperArm.add(joints.leftElbow);
+
+            joints.leftLowerArm = createBoneMesh(0.28, 0.025);
+            joints.leftElbow.add(joints.leftLowerArm);
+
+            // Right Arm Hierarchy
+            joints.rightShoulder = new THREE.Group();
+            joints.rightShoulder.position.set(-0.2, 0.02, 0);
+            joints.chest.add(joints.rightShoulder);
+
+            joints.rightUpperArm = createBoneMesh(0.3, 0.03);
+            joints.rightShoulder.add(joints.rightUpperArm);
+
+            joints.rightElbow = new THREE.Group();
+            joints.rightElbow.position.set(0, -0.3, 0);
+            joints.rightUpperArm.add(joints.rightElbow);
+
+            joints.rightLowerArm = createBoneMesh(0.28, 0.025);
+            joints.rightElbow.add(joints.rightLowerArm);
+
+            // Left Leg Hierarchy
+            joints.leftHip = new THREE.Group();
+            joints.leftHip.position.set(0.1, -0.06, 0);
+            joints.pelvis.add(joints.leftHip);
+
+            joints.leftUpperLeg = createBoneMesh(0.4, 0.04);
+            joints.leftHip.add(joints.leftUpperLeg);
+
+            joints.leftKnee = new THREE.Group();
+            joints.leftKnee.position.set(0, -0.4, 0);
+            joints.leftUpperLeg.add(joints.leftKnee);
+
+            joints.leftLowerLeg = createBoneMesh(0.38, 0.03);
+            joints.leftKnee.add(joints.leftLowerLeg);
+
+            // Right Leg Hierarchy
+            joints.rightHip = new THREE.Group();
+            joints.rightHip.position.set(-0.1, -0.06, 0);
+            joints.pelvis.add(joints.rightHip);
+
+            joints.rightUpperLeg = createBoneMesh(0.4, 0.04);
+            joints.rightHip.add(joints.rightUpperLeg);
+
+            joints.rightKnee = new THREE.Group();
+            joints.rightKnee.position.set(0, -0.4, 0);
+            joints.rightUpperLeg.add(joints.rightKnee);
+
+            joints.rightLowerLeg = createBoneMesh(0.38, 0.03);
+            joints.rightKnee.add(joints.rightLowerLeg);
+
+            // Create Muscle Actuators (Connecting 3D Anchors)
+            setupMuscleActuators();
+        }
+
+        // Create Individual Dynamic Muscle Cylinders/Tubes (MS-Human-700 style)
+        function addMuscle(name, parentA, localA, parentB, localB, radius = 0.022) {
+            const anchorA = new THREE.Object3D();
+            anchorA.position.copy(localA);
+            parentA.add(anchorA);
+
+            const anchorB = new THREE.Object3D();
+            anchorB.position.copy(localB);
+            parentB.add(anchorB);
+
+            // Muscle Cylinder Mesh
+            const geometry = new THREE.CylinderGeometry(radius, radius, 1, 12);
+            const material = new THREE.MeshStandardMaterial({
+                color: 0x06b6d4, // Idle Cyan
+                roughness: 0.3,
+                metalness: 0.1,
+                emissive: 0x0284c7,
+                emissiveIntensity: 0.2
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.castShadow = true;
+            scene.add(mesh);
+
+            muscles.push({
+                name,
+                mesh,
+                anchorA,
+                anchorB,
+                radius,
+                tension: 0
+            });
+        }
+
+        function setupMuscleActuators() {
+            // --- ARMS MUSCLES ---
+            // Left Bicep
+            addMuscle('Left Bicep', joints.leftShoulder, new THREE.Vector3(0.01, -0.05, 0.02), joints.leftElbow, new THREE.Vector3(0, -0.06, 0.02), 0.024);
+            // Left Tricep
+            addMuscle('Left Tricep', joints.leftShoulder, new THREE.Vector3(-0.01, -0.05, -0.02), joints.leftElbow, new THREE.Vector3(0, -0.06, -0.02), 0.024);
+
+            // Right Bicep
+            addMuscle('Right Bicep', joints.rightShoulder, new THREE.Vector3(-0.01, -0.05, 0.02), joints.rightElbow, new THREE.Vector3(0, -0.06, 0.02), 0.024);
+            // Right Tricep
+            addMuscle('Right Tricep', joints.rightShoulder, new THREE.Vector3(0.01, -0.05, -0.02), joints.rightElbow, new THREE.Vector3(0, -0.06, -0.02), 0.024);
+
+            // Deltoids
+            addMuscle('Left Deltoid', joints.chest, new THREE.Vector3(0.15, 0.02, 0), joints.leftUpperArm, new THREE.Vector3(0, -0.12, 0), 0.028);
+            addMuscle('Right Deltoid', joints.chest, new THREE.Vector3(-0.15, 0.02, 0), joints.rightUpperArm, new THREE.Vector3(0, -0.12, 0), 0.028);
+
+            // Pectorals
+            addMuscle('Left Pec', joints.chest, new THREE.Vector3(0.05, -0.02, 0.08), joints.leftUpperArm, new THREE.Vector3(0, -0.08, 0.04), 0.026);
+            addMuscle('Right Pec', joints.chest, new THREE.Vector3(-0.05, -0.02, 0.08), joints.rightUpperArm, new THREE.Vector3(0, -0.08, 0.04), 0.026);
+
+            // --- LEGS MUSCLES ---
+            // Left Quadriceps
+            addMuscle('Left Quad', joints.leftHip, new THREE.Vector3(0, -0.05, 0.03), joints.leftKnee, new THREE.Vector3(0, -0.05, 0.03), 0.032);
+            // Left Hamstring
+            addMuscle('Left Hamstring', joints.leftHip, new THREE.Vector3(0, -0.05, -0.03), joints.leftKnee, new THREE.Vector3(0, -0.05, -0.03), 0.03);
+
+            // Right Quadriceps
+            addMuscle('Right Quad', joints.rightHip, new THREE.Vector3(0, -0.05, 0.03), joints.rightKnee, new THREE.Vector3(0, -0.05, 0.03), 0.032);
+            // Right Hamstring
+            addMuscle('Right Hamstring', joints.rightHip, new THREE.Vector3(0, -0.05, -0.03), joints.rightKnee, new THREE.Vector3(0, -0.05, -0.03), 0.03);
+
+            // Calves
+            addMuscle('Left Calf', joints.leftKnee, new THREE.Vector3(0, -0.05, -0.025), joints.leftLowerLeg, new THREE.Vector3(0, -0.3, -0.02), 0.025);
+            addMuscle('Right Calf', joints.rightKnee, new THREE.Vector3(0, -0.05, -0.025), joints.rightLowerLeg, new THREE.Vector3(0, -0.3, -0.02), 0.025);
+
+            // Abdominals / Core
+            addMuscle('Left Abs', joints.chest, new THREE.Vector3(0.06, -0.06, 0.08), joints.pelvis, new THREE.Vector3(0.06, 0.04, 0.07), 0.025);
+            addMuscle('Right Abs', joints.chest, new THREE.Vector3(-0.06, -0.06, 0.08), joints.pelvis, new THREE.Vector3(-0.06, 0.04, 0.07), 0.025);
+        }
+
+        // Update Muscle Actuator Positions & Dynamic Color Heatmap
+        function updateMuscleActuators() {
+            const worldPosA = new THREE.Vector3();
+            const worldPosB = new THREE.Vector3();
+
+            muscles.forEach(muscle => {
+                muscle.anchorA.getWorldPosition(worldPosA);
+                muscle.anchorB.getWorldPosition(worldPosB);
+
+                // Distance between insertion points
+                const distance = worldPosA.distanceTo(worldPosB);
+                const midpoint = new THREE.Vector3().addVectors(worldPosA, worldPosB).multiplyScalar(0.5);
+
+                // Update Mesh Transforms
+                muscle.mesh.position.copy(midpoint);
+                muscle.mesh.scale.set(1, distance, 1);
+                muscle.mesh.lookAt(worldPosB);
+                muscle.mesh.rotateX(Math.PI / 2); // Orient cylinder along distance axis
+
+                // Calculate Tension Intensity (Normalize Flexion Angles)
+                let tension = 0;
+                if (muscle.name.includes('Bicep')) {
+                    const angle = muscle.name.includes('Left') ? state.jointAngles.leftElbow : state.jointAngles.rightElbow;
+                    tension = Math.max(0, (160 - angle) / 120); // Flexed elbow = high bicep tension
+                } else if (muscle.name.includes('Tricep')) {
+                    const angle = muscle.name.includes('Left') ? state.jointAngles.leftElbow : state.jointAngles.rightElbow;
+                    tension = Math.max(0, (angle - 100) / 80); // Extended elbow = tricep tension
+                } else if (muscle.name.includes('Quad')) {
+                    const angle = muscle.name.includes('Left') ? state.jointAngles.leftKnee : state.jointAngles.rightKnee;
+                    tension = Math.max(0, (170 - angle) / 110); // Squat flexed knee = quad load
+                } else if (muscle.name.includes('Deltoid')) {
+                    const angle = muscle.name.includes('Left') ? state.jointAngles.leftShoulder : state.jointAngles.rightShoulder;
+                    tension = Math.min(1, angle / 130);
+                } else {
+                    tension = 0.2; // Baseline rest
+                }
+
+                muscle.tension = Math.min(1, Math.max(0, tension));
+
+                // Heatmap Color Interpolation (Cyan Idle -> Crimson/Orange High Tension)
+                if (state.heatmapEnabled) {
+                    const idleColor = new THREE.Color(0x06b6d4);
+                    const activeColor = new THREE.Color(0xef4444);
+                    const finalColor = idleColor.clone().lerp(activeColor, muscle.tension);
+
+                    muscle.mesh.material.color.copy(finalColor);
+                    muscle.mesh.material.emissive.copy(finalColor);
+                    muscle.mesh.material.emissiveIntensity = 0.1 + muscle.tension * 0.6;
+                } else {
+                    muscle.mesh.material.color.setHex(0x38bdf8);
+                    muscle.mesh.material.emissive.setHex(0x0284c7);
+                    muscle.mesh.material.emissiveIntensity = 0.2;
+                }
+            });
+        }
+
+        // Sync 3D Bones with Estimated Joint Angles
+        function sync3DSkeleton() {
+            // Convert Angle Degrees to Radians
+            const rad = deg => (deg * Math.PI) / 180;
+
+            // Arms Flexion
+            joints.leftElbow.rotation.x = -rad(180 - state.jointAngles.leftElbow);
+            joints.rightElbow.rotation.x = -rad(180 - state.jointAngles.rightElbow);
+
+            joints.leftShoulder.rotation.z = rad(state.jointAngles.leftShoulder);
+            joints.rightShoulder.rotation.z = -rad(state.jointAngles.rightShoulder);
+
+            // Legs Flexion
+            joints.leftKnee.rotation.x = rad(180 - state.jointAngles.leftKnee);
+            joints.rightKnee.rotation.x = rad(180 - state.jointAngles.rightKnee);
+
+            joints.leftHip.rotation.x = -rad(state.jointAngles.leftHip);
+            joints.rightHip.rotation.x = -rad(state.jointAngles.rightHip);
+
+            // Pelvis position adjustment for squats
+            const avgKnee = (state.jointAngles.leftKnee + state.jointAngles.rightKnee) / 2;
+            const squatDepth = Math.max(0, (180 - avgKnee) / 180) * 0.35;
+            joints.pelvis.position.y = 0.9 - squatDepth;
+
+            // Re-compute Muscle Tension Cylinders
+            updateMuscleActuators();
+        }
+
+        // ==========================================
+        // KINEMATICS & POSENET OVERLAY LOGIC
+        // ==========================================
+
+        // Calculate angle between 3 2D points (A-B-C)
+        function calculateAngle(p1, p2, p3) {
+            if (!p1 || !p2 || !p3) return 180;
+            const radians = Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x);
+            let angle = Math.abs((radians * 180.0) / Math.PI);
+            if (angle > 180.0) angle = 360 - angle;
+            return Math.round(angle);
+        }
+
+        // Process Webcam Frame through PoseNet
+        async function processPoseNet() {
+            if (state.isCameraActive && state.net && webcamVideo.readyState === 4) {
+                const pose = await state.net.estimateSinglePose(webcamVideo, {
+                    flipHorizontal: true
+                });
+
+                confidenceScoreEl.innerText = `Score: ${pose.score.toFixed(2)}`;
+
+                // Draw Overlay Canvas
+                drawPoseOverlay(pose);
+
+                // Compute Joint Kinematics
+                extractKinematics(pose.keypoints);
+            } else if (state.activePreset) {
+                // Synthesize Kinematics from Preset Motion Cycles
+                synthesizePresetMotion();
+            }
+
+            // Sync 3D Engine
+            sync3DSkeleton();
+        }
+
+        // Extract Joint Flexion Angles from Detected Keypoints
+        function extractKinematics(keypoints) {
+            const getPoint = name => keypoints.find(k => k.part === name && k.score > 0.3);
+
+            const shoulderL = getPoint('leftShoulder');
+            const elbowL = getPoint('leftElbow');
+            const wristL = getPoint('leftWrist');
+
+            const shoulderR = getPoint('rightShoulder');
+            const elbowR = getPoint('rightElbow');
+            const wristR = getPoint('rightWrist');
+
+            const hipL = getPoint('leftHip');
+            const kneeL = getPoint('leftKnee');
+            const ankleL = getPoint('leftAnkle');
+
+            const hipR = getPoint('rightHip');
+            const kneeR = getPoint('rightKnee');
+            const ankleR = getPoint('rightAnkle');
+
+            // Elbow Flexion Angles
+            if (shoulderL && elbowL && wristL) {
+                state.jointAngles.leftElbow = calculateAngle(shoulderL.position, elbowL.position, wristL.position);
+            }
+            if (shoulderR && elbowR && wristR) {
+                state.jointAngles.rightElbow = calculateAngle(shoulderR.position, elbowR.position, wristR.position);
+            }
+
+            // Knee Flexion Angles
+            if (hipL && kneeL && ankleL) {
+                state.jointAngles.leftKnee = calculateAngle(hipL.position, kneeL.position, ankleL.position);
+            }
+            if (hipR && kneeR && ankleR) {
+                state.jointAngles.rightKnee = calculateAngle(hipR.position, kneeR.position, ankleR.position);
+            }
+
+            // Shoulder Abduction
+            if (hipL && shoulderL && elbowL) {
+                state.jointAngles.leftShoulder = Math.min(150, Math.max(0, 180 - calculateAngle(hipL.position, shoulderL.position, elbowL.position)));
+            }
+            if (hipR && shoulderR && elbowR) {
+                state.jointAngles.rightShoulder = Math.min(150, Math.max(0, 180 - calculateAngle(hipR.position, shoulderR.position, elbowR.position)));
+            }
+
+            // Hip Flexion
+            if (shoulderL && hipL && kneeL) {
+                state.jointAngles.leftHip = Math.min(110, Math.max(0, 180 - calculateAngle(shoulderL.position, hipL.position, kneeL.position)));
+            }
+            if (shoulderR && hipR && kneeR) {
+                state.jointAngles.rightHip = Math.min(110, Math.max(0, 180 - calculateAngle(shoulderR.position, hipR.position, kneeR.position)));
+            }
+
+            // UI Metric Telemetry Updates
+            updateAngleUI();
+        }
+
+        // Draw Skeleton Lines and Keypoint Dots on Canvas Overlay
+        function drawPoseOverlay(pose) {
+            poseCanvas.width = webcamVideo.videoWidth;
+            poseCanvas.height = webcamVideo.videoHeight;
+            canvasCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
+
+            if (!state.showSkeleton && !state.showPoints) return;
+
+            const adjacentPairs = posenet.getAdjacentKeyPoints(pose.keypoints, 0.3);
+
+            // Draw Skeleton Connections
+            if (state.showSkeleton) {
+                adjacentPairs.forEach(([kp1, kp2]) => {
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(kp1.position.x, kp1.position.y);
+                    canvasCtx.lineTo(kp2.position.x, kp2.position.y);
+                    canvasCtx.lineWidth = 3;
+                    canvasCtx.strokeStyle = '#818cf8';
+                    canvasCtx.stroke();
+                });
+            }
+
+            // Draw Keypoint Dots
+            if (state.showPoints) {
+                pose.keypoints.forEach(kp => {
+                    if (kp.score > 0.3) {
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(kp.position.x, kp.position.y, 5, 0, 2 * Math.PI);
+                        canvasCtx.fillStyle = '#f43f5e';
+                        canvasCtx.fill();
+                        canvasCtx.lineWidth = 1.5;
+                        canvasCtx.strokeStyle = '#ffffff';
+                        canvasCtx.stroke();
+                    }
+                });
+            }
+        }
+
+        // Synthesize Preset Motion Cycles for Demo
+        function synthesizePresetMotion() {
+            state.presetFrame += 0.04;
+            const t = state.presetFrame;
+
+            if (state.activePreset === 'idle') {
+                state.jointAngles.leftElbow = 175 + Math.sin(t) * 3;
+                state.jointAngles.rightElbow = 175 + Math.cos(t) * 3;
+                state.jointAngles.leftKnee = 175;
+                state.jointAngles.rightKnee = 175;
+                state.jointAngles.leftShoulder = 10;
+                state.jointAngles.rightShoulder = 10;
+                state.jointAngles.leftHip = 0;
+                state.jointAngles.rightHip = 0;
+            } else if (state.activePreset === 'squat') {
+                const sineWave = (Math.sin(t) + 1) / 2; // 0 to 1
+                const kneeAngle = 175 - sineWave * 85;  // 175 down to 90 deg
+                state.jointAngles.leftKnee = kneeAngle;
+                state.jointAngles.rightKnee = kneeAngle;
+                state.jointAngles.leftHip = sineWave * 45;
+                state.jointAngles.rightHip = sineWave * 45;
+                state.jointAngles.leftElbow = 140;
+                state.jointAngles.rightElbow = 140;
+            } else if (state.activePreset === 'curl') {
+                const sineWave = (Math.sin(t) + 1) / 2;
+                state.jointAngles.rightElbow = 170 - sineWave * 125; // Flexion cycle
+                state.jointAngles.leftElbow = 170 - Math.cos(t) * 15;
+                state.jointAngles.leftKnee = 175;
+                state.jointAngles.rightKnee = 175;
+                state.jointAngles.rightShoulder = 15;
+            }
+
+            confidenceScoreEl.innerText = 'Preset Active';
+            updateAngleUI();
+        }
+
+        // Update Numerical Telemetry in DOM
+        function updateAngleUI() {
+            anglesEl.leftElbow.innerText = `${state.jointAngles.leftElbow}°`;
+            anglesEl.rightElbow.innerText = `${state.jointAngles.rightElbow}°`;
+            anglesEl.leftKnee.innerText = `${state.jointAngles.leftKnee}°`;
+            anglesEl.rightKnee.innerText = `${state.jointAngles.rightKnee}°`;
+            anglesEl.leftShoulder.innerText = `${state.jointAngles.leftShoulder}°`;
+            anglesEl.rightShoulder.innerText = `${state.jointAngles.rightShoulder}°`;
+            anglesEl.leftHip.innerText = `${state.jointAngles.leftHip}°`;
+            anglesEl.rightHip.innerText = `${state.jointAngles.rightHip}°`;
+        }
+
+        function updatePresetButtons(activeKey) {
+            document.querySelectorAll('.preset-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-600/30', 'border-indigo-500/50', 'text-indigo-200');
+                btn.classList.add('bg-slate-800', 'border-slate-700', 'text-slate-300');
+            });
+            if (activeKey) {
+                const activeBtn = document.getElementById(`preset-${activeKey}`);
+                if (activeBtn) {
+                    activeBtn.classList.remove('bg-slate-800', 'border-slate-700', 'text-slate-300');
+                    activeBtn.classList.add('bg-indigo-600/30', 'border-indigo-500/50', 'text-indigo-200');
+                }
+            }
+        }
+
+        // Main Animation Render Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // FPS Calculation
+            const now = performance.now();
+            const delta = now - state.lastFrameTime;
+            state.fps = Math.round(1000 / delta);
+            state.lastFrameTime = now;
+            fpsCounter.innerText = state.fps.toString().padStart(2, '0');
+
+            // Process Pose Tracking Kinematics
+            processPoseNet();
+
+            // Render Three.js Scene
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Event Listener Bindings
+        window.onload = async function () {
+            initThreeJS();
+            await initPoseNet();
+
+            // Camera toggle
+            toggleCamBtn.addEventListener('click', toggleCamera);
+
+            // Checkboxes
+            document.getElementById('toggle-skeleton-overlay').addEventListener('change', e => state.showSkeleton = e.target.checked);
+            document.getElementById('toggle-points-overlay').addEventListener('change', e => state.showPoints = e.target.checked);
+            document.getElementById('toggle-heatmap').addEventListener('change', e => state.heatmapEnabled = e.target.checked);
+
+            // Presets
+            document.getElementById('preset-idle').addEventListener('click', () => {
+                if (state.isCameraActive) stopCamera();
+                state.activePreset = 'idle';
+                updatePresetButtons('idle');
+            });
+            document.getElementById('preset-squat').addEventListener('click', () => {
+                if (state.isCameraActive) stopCamera();
+                state.activePreset = 'squat';
+                updatePresetButtons('squat');
+            });
+            document.getElementById('preset-curl').addEventListener('click', () => {
+                if (state.isCameraActive) stopCamera();
+                state.activePreset = 'curl';
+                updatePresetButtons('curl');
+            });
+
+            // Camera Reset
+            document.getElementById('reset-cam-btn').addEventListener('click', () => {
+                camera.position.set(0, 1.2, 3.8);
+                controls.target.set(0, 0.9, 0);
+            });
+
+            // Kick off main render loop
+            animate();
+        };
+    </script>
+</body>
+</html>
