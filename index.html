@@ -4,16 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MS-BioActuator 3D & PoseNet Motion Recorder</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
-    <!-- TensorFlow.js Core & PoseNet -->
+
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
-    
-    <!-- Three.js & OrbitControls -->
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 
@@ -24,37 +20,21 @@
             color: #e2e8f0;
             overflow-x: hidden;
         }
-
         .glass-panel {
             background: rgba(15, 23, 42, 0.75);
             backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.08);
             box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
         }
-
-        .mirror {
-            transform: scaleX(-1);
-        }
-
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        ::-webkit-scrollbar-track {
-            background: rgba(15, 23, 42, 0.6);
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #475569;
-        }
+        .mirror { transform: scaleX(-1); }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.6); }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
     </style>
 </head>
 <body class="h-screen w-screen flex flex-col m-0 p-0 overflow-hidden">
 
-    <!-- Header Navigation -->
     <header class="h-16 border-b border-slate-800 bg-slate-950/80 px-6 flex items-center justify-between shrink-0 z-20">
         <div class="flex items-center gap-3">
             <div class="p-2 bg-indigo-600/20 rounded-xl border border-indigo-500/30 text-indigo-400">
@@ -68,7 +48,6 @@
             </div>
         </div>
 
-        <!-- System Controls & Metrics Badge -->
         <div class="flex items-center gap-4">
             <div class="hidden sm:flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs">
                 <div class="flex items-center gap-1.5">
@@ -78,21 +57,18 @@
                 <span class="text-slate-600">|</span>
                 <span class="text-slate-400">FPS: <strong id="fps-counter" class="text-indigo-400 font-mono">00</strong></span>
             </div>
-            
-            <button id="toggle-camera-btn" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-lg shadow-indigo-600/20 transition duration-200">
+
+            <button id="toggle-camera-btn" onclick="myToggleCamera()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-lg shadow-indigo-600/20 transition duration-200">
                 <i class="fa-solid fa-video"></i>
                 <span id="camera-btn-text">Start Camera</span>
             </button>
         </div>
     </header>
 
-    <!-- Main Content Grid Layout -->
     <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 min-h-0 relative">
 
-        <!-- Left/Top Sidebar - Camera & 2D PoseNet Stream + Recording -->
         <div class="lg:col-span-4 flex flex-col gap-4 min-h-0 h-full overflow-y-auto">
-            
-            <!-- Camera / Pose Canvas Card -->
+
             <div class="glass-panel rounded-2xl p-3 flex flex-col relative overflow-hidden shrink-0 h-[280px]">
                 <div class="flex justify-between items-center mb-2 px-1">
                     <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
@@ -103,41 +79,37 @@
                     </span>
                 </div>
 
-                <!-- Video / Canvas Overlay Container -->
                 <div class="relative w-full flex-1 bg-black/60 rounded-xl overflow-hidden flex items-center justify-center border border-slate-800/80">
-                    <video id="webcam-video" class="absolute w-full h-full object-cover mirror hidden" playsinline muted></video>
+                    <video id="webcam-video" class="absolute w-px h-px opacity-0 pointer-events-none" playsinline muted></video>
                     <canvas id="pose-canvas" class="absolute w-full h-full object-cover mirror z-10"></canvas>
-                    
-                    <!-- Fallback / Empty Overlay Message -->
+
                     <div id="video-placeholder" class="text-center p-6 text-slate-500 flex flex-col items-center gap-3">
                         <i class="fa-solid fa-user-gear text-4xl text-slate-600 animate-bounce"></i>
                         <p class="text-xs max-w-[220px]">Click "Start Camera" to begin live motion tracking or use presets below.</p>
                     </div>
                 </div>
 
-                <!-- Webcam Overlay Checkboxes -->
                 <div class="mt-2.5 flex items-center justify-between gap-2 px-1 text-xs">
                     <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
-                        <input type="checkbox" id="toggle-skeleton-overlay" checked class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
+                        <input type="checkbox" id="toggle-skeleton-overlay" checked onclick="myState.showSkeleton = this.checked" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
                         Skeleton Overlay
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
-                        <input type="checkbox" id="toggle-points-overlay" checked class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
+                        <input type="checkbox" id="toggle-points-overlay" checked onclick="myState.showPoints = this.checked" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
                         Keypoints
                     </label>
                 </div>
             </div>
 
-            <!-- Motion Capture JSON Recorder Panel -->
             <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                     <i class="fa-solid fa-file-code text-emerald-400"></i> Motion Data Recorder
                 </h3>
                 <div class="grid grid-cols-2 gap-2">
-                    <button id="startRecBtn" onclick="startRecording()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs py-2 px-3 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button id="startRecBtn" onclick="myStartRecording()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs py-2 px-3 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed">
                         <i class="fa-solid fa-circle-dot mr-1"></i> Start Rec
                     </button>
-                    <button id="stopRecBtn" onclick="stopRecording()" disabled class="bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs py-2 px-3 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button id="stopRecBtn" onclick="myStopRecording()" disabled class="bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs py-2 px-3 rounded-lg shadow transition disabled:opacity-50 disabled:cursor-not-allowed">
                         <i class="fa-solid fa-download mr-1"></i> Save JSON
                     </button>
                 </div>
@@ -146,7 +118,6 @@
                 </div>
             </div>
 
-            <!-- Kinematics telemetry panel -->
             <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                     <i class="fa-solid fa-gauge-high text-pink-400"></i> Joint Flexion Kinematics
@@ -167,43 +138,58 @@
                         </div>
                     </div>
                     <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
-                        <div class="text-[10px] text-slate-500 uppercase">L / R Shoulder Flex</div>
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Shoulder Lift</div>
                         <div class="text-slate-200 mt-1 flex justify-between">
                             <span id="angle-left-shoulder" class="text-indigo-400">0°</span>
                             <span id="angle-right-shoulder" class="text-pink-400">0°</span>
                         </div>
                     </div>
                     <div class="bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
-                        <div class="text-[10px] text-slate-500 uppercase">L / R Hip Flexion</div>
+                        <div class="text-[10px] text-slate-500 uppercase">L / R Hip Lift</div>
                         <div class="text-slate-200 mt-1 flex justify-between">
                             <span id="angle-left-hip" class="text-indigo-400">0°</span>
                             <span id="angle-right-hip" class="text-pink-400">0°</span>
                         </div>
                     </div>
+                    <div class="col-span-2 bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                        <div class="text-[10px] text-slate-500 uppercase">Trunk Lean / Head Tilt / Head Turn</div>
+                        <div class="text-slate-200 mt-1 flex justify-between">
+                            <span id="angle-trunk" class="text-emerald-400">0°</span>
+                            <span id="angle-head-tilt" class="text-emerald-400">0°</span>
+                            <span id="angle-head-turn" class="text-emerald-400">0°</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Controls & Presets Panel -->
             <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0 mb-4">
                 <h3 class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
                     <i class="fa-solid fa-sliders text-purple-400"></i> Visual Engine & Presets
                 </h3>
                 <div class="grid grid-cols-3 gap-2">
-                    <button id="preset-idle" class="preset-btn bg-indigo-600/30 border border-indigo-500/50 hover:bg-indigo-600/50 text-indigo-200 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                    <button id="preset-idle" onclick="mySetPreset('idle')" class="preset-btn bg-indigo-600/30 border border-indigo-500/50 hover:bg-indigo-600/50 text-indigo-200 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
                         T-Pose
                     </button>
-                    <button id="preset-squat" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                    <button id="preset-squat" onclick="mySetPreset('squat')" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
                         Squat Cycle
                     </button>
-                    <button id="preset-curl" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
+                    <button id="preset-curl" onclick="mySetPreset('curl')" class="preset-btn bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-xs py-2 px-1 rounded-lg font-medium transition text-center">
                         Bicep Curl
                     </button>
                 </div>
 
                 <div class="flex items-center justify-between border-t border-slate-800/80 pt-2.5 mt-1">
+                    <span class="text-xs text-slate-300">Camera Motion Plane</span>
+                    <select id="plane-select" onchange="myState.plane = this.value" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
+                        <option value="frontal">Front view (arms/legs out)</option>
+                        <option value="sagittal">Side view (arms/legs forward)</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center justify-between">
                     <span class="text-xs text-slate-300">Actuator Heatmap Glow</span>
                     <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" id="toggle-heatmap" checked class="sr-only peer">
+                        <input type="checkbox" id="toggle-heatmap" checked onclick="myState.heatmap = this.checked" class="sr-only peer">
                         <div class="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-gradient-to-r peer-checked:from-indigo-500 peer-checked:to-pink-500"></div>
                     </label>
                 </div>
@@ -211,14 +197,13 @@
 
         </div>
 
-        <!-- Right/Main View - 3D Musculoskeletal Actuator Stage -->
         <div class="lg:col-span-8 glass-panel rounded-2xl flex flex-col relative overflow-hidden h-full min-h-[450px]">
-            
+
             <div class="absolute top-4 left-4 z-10 flex items-center gap-2 bg-slate-950/70 border border-slate-800 px-3 py-1.5 rounded-xl text-xs backdrop-blur-md">
                 <i class="fa-solid fa-cube text-indigo-400"></i>
                 <span class="font-medium text-slate-300">MS-700 Biomechanical Model</span>
                 <span class="text-slate-600">|</span>
-                <span class="text-slate-400 text-[11px]">36 Core Muscle Groups</span>
+                <span class="text-slate-400 text-[11px]">12 Core Muscle Groups</span>
             </div>
 
             <div class="absolute top-4 right-4 z-10 flex items-center gap-3 bg-slate-950/70 border border-slate-800 px-3 py-1.5 rounded-xl text-[11px] backdrop-blur-md text-slate-300">
@@ -232,58 +217,60 @@
                 </div>
             </div>
 
-            <!-- Three.js Canvas Container -->
             <div id="three-container" class="w-full h-full cursor-grab active:cursor-grabbing"></div>
 
             <div class="absolute bottom-4 left-4 right-4 z-10 pointer-events-none flex justify-between items-end">
                 <div class="bg-slate-950/80 border border-slate-800/80 p-2.5 rounded-xl text-[11px] text-slate-400 backdrop-blur-md pointer-events-auto">
                     <i class="fa-solid fa-hand-pointer text-indigo-400 mr-1"></i> Orbit: Left Click + Drag | Pan: Right Click | Zoom: Scroll
                 </div>
-                
-                <button id="reset-cam-btn" class="pointer-events-auto bg-slate-900/90 border border-slate-800 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs backdrop-blur-md transition flex items-center gap-1.5">
+
+                <button id="reset-cam-btn" onclick="myResetView()" class="pointer-events-auto bg-slate-900/90 border border-slate-800 hover:bg-slate-800 text-slate-300 px-3 py-1.5 rounded-xl text-xs backdrop-blur-md transition flex items-center gap-1.5">
                     <i class="fa-solid fa-rotate-right"></i> Reset View
                 </button>
             </div>
         </div>
     </main>
 
-    <!-- Combined Application Logic Script -->
     <script>
-        const state = {
+        const myState = {
             net: null,
-            webcamStream: null,
-            isCameraActive: false,
+            stream: null,
+            cameraOn: false,
+            busy: false,
+            lastPose: null,
             showSkeleton: true,
             showPoints: true,
-            heatmapEnabled: true,
-            activePreset: 'idle',
+            heatmap: true,
+            plane: 'frontal',
+            preset: 'idle',
+            presetPlane: 'frontal',
             presetFrame: 0,
-            fps: 0,
-            lastFrameTime: performance.now(),
-            jointAngles: {
+            lastTime: performance.now(),
+            recording: false,
+            frames: [],
+            recStart: 0,
+            angles: {
                 leftElbow: 180, rightElbow: 180,
                 leftKnee: 180, rightKnee: 180,
                 leftShoulder: 0, rightShoulder: 0,
-                leftHip: 0, rightHip: 0
-            },
-            // Recording state variables
-            isRecording: false,
-            recordedFrames: [],
-            recStartTime: 0
+                leftHip: 0, rightHip: 0,
+                trunkLean: 0, headTilt: 0, headTurn: 0
+            }
         };
 
-        const webcamVideo = document.getElementById('webcam-video');
-        const poseCanvas = document.getElementById('pose-canvas');
-        const canvasCtx = poseCanvas.getContext('2d');
-        const toggleCamBtn = document.getElementById('toggle-camera-btn');
-        const cameraBtnText = document.getElementById('camera-btn-text');
-        const statusText = document.getElementById('status-text');
-        const statusIndicator = document.getElementById('status-indicator');
-        const fpsCounter = document.getElementById('fps-counter');
-        const confidenceScoreEl = document.getElementById('confidence-score');
-        const videoPlaceholder = document.getElementById('video-placeholder');
+        const myVideo = document.getElementById('webcam-video');
+        const myCanvas = document.getElementById('pose-canvas');
+        const myCtx = myCanvas.getContext('2d');
+        const myCamBtn = document.getElementById('toggle-camera-btn');
+        const myCamBtnText = document.getElementById('camera-btn-text');
+        const myStatusText = document.getElementById('status-text');
+        const myStatusDot = document.getElementById('status-indicator');
+        const myFpsEl = document.getElementById('fps-counter');
+        const myScoreEl = document.getElementById('confidence-score');
+        const myPlaceholder = document.getElementById('video-placeholder');
+        const myRecEl = document.getElementById('rec-status');
 
-        const anglesEl = {
+        const myAngleEls = {
             leftElbow: document.getElementById('angle-left-elbow'),
             rightElbow: document.getElementById('angle-right-elbow'),
             leftKnee: document.getElementById('angle-left-knee'),
@@ -291,434 +278,537 @@
             leftShoulder: document.getElementById('angle-left-shoulder'),
             rightShoulder: document.getElementById('angle-right-shoulder'),
             leftHip: document.getElementById('angle-left-hip'),
-            rightHip: document.getElementById('angle-right-hip')
+            rightHip: document.getElementById('angle-right-hip'),
+            trunkLean: document.getElementById('angle-trunk'),
+            headTilt: document.getElementById('angle-head-tilt'),
+            headTurn: document.getElementById('angle-head-turn')
         };
 
-        async function initPoseNet() {
+        async function myInitPoseNet() {
             try {
-                statusText.innerText = 'Loading PoseNet...';
-                state.net = await posenet.load({
+                myStatusText.innerText = 'Loading PoseNet...';
+                myState.net = await posenet.load({
                     architecture: 'MobileNetV1',
                     outputStride: 16,
                     inputResolution: { width: 320, height: 240 },
                     multiplier: 0.75
                 });
-                statusText.innerText = 'PoseNet Ready';
-                statusIndicator.classList.remove('bg-amber-500');
-                statusIndicator.classList.add('bg-emerald-500');
+                myStatusText.innerText = 'PoseNet Ready';
+                myStatusDot.classList.remove('bg-amber-500');
+                myStatusDot.classList.add('bg-emerald-500');
             } catch (err) {
-                console.error("Failed to load PoseNet:", err);
-                statusText.innerText = 'Model Load Failed';
-                statusIndicator.classList.remove('bg-emerald-500');
-                statusIndicator.classList.add('bg-rose-500');
+                console.error('Failed to load PoseNet:', err);
+                myStatusText.innerText = 'Model Load Failed';
+                myStatusDot.classList.remove('bg-amber-500');
+                myStatusDot.classList.add('bg-rose-500');
             }
         }
 
-        async function toggleCamera() {
-            if (state.isCameraActive) {
-                stopCamera();
+        async function myToggleCamera() {
+            if (myState.cameraOn) {
+                myStopCamera();
             } else {
-                await startCamera();
+                await myStartCamera();
             }
         }
 
-        async function startCamera() {
+        async function myStartCamera() {
             try {
-                state.webcamStream = await navigator.mediaDevices.getUserMedia({
+                myState.stream = await navigator.mediaDevices.getUserMedia({
                     video: { width: 640, height: 480 },
                     audio: false
                 });
-                webcamVideo.srcObject = state.webcamStream;
-                await webcamVideo.play();
+                myVideo.srcObject = myState.stream;
+                await myVideo.play();
 
-                webcamVideo.classList.remove('hidden');
-                videoPlaceholder.classList.add('hidden');
-                state.isCameraActive = true;
-                state.activePreset = null;
-                updatePresetButtons(null);
+                myPlaceholder.classList.add('hidden');
+                myState.cameraOn = true;
+                myState.preset = null;
+                myUpdatePresetButtons(null);
 
-                cameraBtnText.innerText = 'Stop Camera';
-                toggleCamBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-500');
-                toggleCamBtn.classList.add('bg-rose-600', 'hover:bg-rose-500');
+                myCamBtnText.innerText = 'Stop Camera';
+                myCamBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-500');
+                myCamBtn.classList.add('bg-rose-600', 'hover:bg-rose-500');
             } catch (err) {
-                console.error("Camera access failed:", err);
-                alert("Could not access webcam.");
+                console.error('Camera access failed:', err);
+                alert('Could not access webcam.');
             }
         }
 
-        function stopCamera() {
-            if (state.isRecording) {
-                stopRecording();
+        function myStopCamera() {
+            if (myState.recording) myStopRecording();
+            if (myState.stream) {
+                myState.stream.getTracks().forEach(track => track.stop());
+                myState.stream = null;
             }
-            if (state.webcamStream) {
-                state.webcamStream.getTracks().forEach(track => track.stop());
-                state.webcamStream = null;
-            }
-            webcamVideo.classList.add('hidden');
-            videoPlaceholder.classList.remove('hidden');
-            state.isCameraActive = false;
+            myState.cameraOn = false;
+            myState.lastPose = null;
+            myCtx.clearRect(0, 0, myCanvas.width, myCanvas.height);
+            myPlaceholder.classList.remove('hidden');
 
-            cameraBtnText.innerText = 'Start Camera';
-            toggleCamBtn.classList.remove('bg-rose-600', 'hover:bg-rose-500');
-            toggleCamBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-500');
+            myCamBtnText.innerText = 'Start Camera';
+            myCamBtn.classList.remove('bg-rose-600', 'hover:bg-rose-500');
+            myCamBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-500');
 
-            state.activePreset = 'idle';
-            updatePresetButtons('idle');
+            mySetPreset('idle');
         }
 
-        // --- RECORDING FUNCTIONS ---
-        function startRecording() {
-            if (!state.isCameraActive) {
-                alert("Please start the camera first before recording motion data.");
+        function myStartRecording() {
+            if (!myState.cameraOn) {
+                alert('Please start the camera first before recording motion data.');
                 return;
             }
-            state.recordedFrames = [];
-            state.isRecording = true;
-            state.recStartTime = performance.now();
+            myState.frames = [];
+            myState.recording = true;
+            myState.recStart = performance.now();
             document.getElementById('startRecBtn').disabled = true;
             document.getElementById('stopRecBtn').disabled = false;
-            document.getElementById('rec-status').innerText = "Status: Recording frames...";
+            myRecEl.innerText = 'Status: Recording frames...';
         }
 
-        function stopRecording() {
-            state.isRecording = false;
+        function myStopRecording() {
+            myState.recording = false;
             document.getElementById('startRecBtn').disabled = false;
             document.getElementById('stopRecBtn').disabled = true;
-            document.getElementById('rec-status').innerText = `Status: Saved ${state.recordedFrames.length} frames!`;
+            myRecEl.innerText = `Status: Saved ${myState.frames.length} frames!`;
 
-            if (state.recordedFrames.length > 0) {
-                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state.recordedFrames));
-                const downloadAnchor = document.createElement('a');
-                downloadAnchor.setAttribute("href", dataStr);
-                downloadAnchor.setAttribute("download", "pose_motion_data.json");
-                document.body.appendChild(downloadAnchor);
-                downloadAnchor.click();
-                downloadAnchor.remove();
+            if (myState.frames.length > 0) {
+                const myBlob = new Blob([JSON.stringify(myState.frames)], { type: 'application/json' });
+                const myLink = document.createElement('a');
+                myLink.href = URL.createObjectURL(myBlob);
+                myLink.download = 'pose_motion_data.json';
+                document.body.appendChild(myLink);
+                myLink.click();
+                myLink.remove();
             }
         }
 
-        // --- THREE.JS ENGINE ---
-        let scene, camera, renderer, controls;
-        let joints = {};
-        let muscles = [];
+        let myScene, myCamera, myRenderer, myControls;
+        const myJoints = {};
+        const myMuscles = [];
 
-        function initThreeJS() {
-            const container = document.getElementById('three-container');
-            const width = container.clientWidth;
-            const height = container.clientHeight;
+        function myInitThree() {
+            const myContainer = document.getElementById('three-container');
+            const myW = myContainer.clientWidth;
+            const myH = myContainer.clientHeight;
 
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x0b0f19);
-            scene.fog = new THREE.FogExp2(0x0b0f19, 0.035);
+            myScene = new THREE.Scene();
+            myScene.background = new THREE.Color(0x0b0f19);
+            myScene.fog = new THREE.FogExp2(0x0b0f19, 0.035);
 
-            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 100);
-            camera.position.set(0, 1.2, 3.8);
+            myCamera = new THREE.PerspectiveCamera(45, myW / myH, 0.1, 100);
+            myCamera.position.set(0, 1.2, 3.8);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(width, height);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            renderer.shadowMap.enabled = true;
-            container.appendChild(renderer.domElement);
+            myRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            myRenderer.setSize(myW, myH);
+            myRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            myContainer.appendChild(myRenderer.domElement);
 
-            controls = new THREE.OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.05;
-            controls.target.set(0, 0.9, 0);
+            myControls = new THREE.OrbitControls(myCamera, myRenderer.domElement);
+            myControls.enableDamping = true;
+            myControls.dampingFactor = 0.05;
+            myControls.target.set(0, 0.9, 0);
 
-            scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-            const mainLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            mainLight.position.set(3, 8, 5);
-            scene.add(mainLight);
+            myScene.add(new THREE.AmbientLight(0xffffff, 0.7));
+            const myLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            myLight.position.set(3, 8, 5);
+            myScene.add(myLight);
+            myScene.add(new THREE.GridHelper(10, 20, 0x334155, 0x1e293b));
 
-            scene.add(new THREE.GridHelper(10, 20, 0x334155, 0x1e293b));
+            myBuildModel();
 
-            buildMusculoskeletalModel();
             window.addEventListener('resize', () => {
-                const w = container.clientWidth, h = container.clientHeight;
-                camera.aspect = w / h;
-                camera.updateProjectionMatrix();
-                renderer.setSize(w, h);
+                const w = myContainer.clientWidth, h = myContainer.clientHeight;
+                myCamera.aspect = w / h;
+                myCamera.updateProjectionMatrix();
+                myRenderer.setSize(w, h);
             });
         }
 
-        function createBoneMesh(length, radius = 0.035) {
-            const group = new THREE.Group();
-            const geometry = new THREE.CylinderGeometry(radius * 0.8, radius, length, 12);
-            geometry.translate(0, -length / 2, 0);
-            const bone = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 }));
-            group.add(bone);
-            return group;
+        function myResetView() {
+            myCamera.position.set(0, 1.2, 3.8);
+            myControls.target.set(0, 0.9, 0);
         }
 
-        function buildMusculoskeletalModel() {
-            const mat = new THREE.MeshStandardMaterial({ color: 0xc0caf5, roughness: 0.3 });
+        function myMakeBone(length, radius, direction) {
+            const myGeo = new THREE.CylinderGeometry(radius * 0.8, radius, length, 12);
+            myGeo.translate(0, direction * length / 2, 0);
+            return new THREE.Mesh(myGeo, new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.4 }));
+        }
 
-            joints.pelvis = new THREE.Group();
-            joints.pelvis.position.set(0, 0.9, 0);
-            scene.add(joints.pelvis);
-            joints.pelvis.add(new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.16), mat));
+        function myMakeBall(parent, radius, x, y, z, color) {
+            const myBall = new THREE.Mesh(
+                new THREE.SphereGeometry(radius, 12, 12),
+                new THREE.MeshStandardMaterial({ color: color, roughness: 0.3 })
+            );
+            myBall.position.set(x, y, z);
+            parent.add(myBall);
+            return myBall;
+        }
 
-            joints.spine = createBoneMesh(0.45, 0.045);
-            joints.pelvis.add(joints.spine);
+        function myBuildModel() {
+            const myMat = new THREE.MeshStandardMaterial({ color: 0xc0caf5, roughness: 0.3 });
 
-            joints.chest = new THREE.Group();
-            joints.chest.position.set(0, 0.45, 0);
-            joints.spine.add(joints.chest);
-            joints.chest.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.18), mat));
+            myJoints.pelvis = new THREE.Group();
+            myJoints.pelvis.position.set(0, 0.9, 0);
+            myScene.add(myJoints.pelvis);
+            myJoints.pelvis.add(new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.12, 0.16), myMat));
 
-            const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 16, 16), mat);
-            head.position.set(0, 0.22, 0);
-            joints.chest.add(head);
+            myJoints.spine = new THREE.Group();
+            myJoints.spine.add(myMakeBone(0.45, 0.045, 1));
+            myJoints.pelvis.add(myJoints.spine);
 
-            // Arms
+            myJoints.chest = new THREE.Group();
+            myJoints.chest.position.set(0, 0.45, 0);
+            myJoints.chest.add(new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.18), myMat));
+            myJoints.spine.add(myJoints.chest);
+
+            myJoints.head = new THREE.Group();
+            myJoints.head.position.set(0, 0.1, 0);
+            myJoints.chest.add(myJoints.head);
+            myMakeBall(myJoints.head, 0.1, 0, 0.12, 0, 0xc0caf5);
+            myMakeBall(myJoints.head, 0.025, 0, 0.11, 0.1, 0xf59e0b);
+            myMakeBall(myJoints.head, 0.015, 0.035, 0.15, 0.088, 0x0f172a);
+            myMakeBall(myJoints.head, 0.015, -0.035, 0.15, 0.088, 0x0f172a);
+            myMakeBall(myJoints.head, 0.02, 0.1, 0.12, 0, 0x818cf8);
+            myMakeBall(myJoints.head, 0.02, -0.1, 0.12, 0, 0x818cf8);
+
             ['left', 'right'].forEach(side => {
-                const sign = side === 'left' ? 1 : -1;
-                joints[side + 'Shoulder'] = new THREE.Group();
-                joints[side + 'Shoulder'].position.set(0.2 * sign, 0.02, 0);
-                joints.chest.add(joints[side + 'Shoulder']);
+                const mySign = side === 'left' ? 1 : -1;
 
-                joints[side + 'UpperArm'] = createBoneMesh(0.3, 0.03);
-                joints[side + 'Shoulder'].add(joints[side + 'UpperArm']);
+                const myShoulder = new THREE.Group();
+                myShoulder.position.set(0.2 * mySign, 0.02, 0);
+                myShoulder.add(myMakeBone(0.3, 0.03, -1));
+                myMakeBall(myShoulder, 0.04, 0, 0, 0, 0xf43f5e);
+                myJoints.chest.add(myShoulder);
+                myJoints[side + 'Shoulder'] = myShoulder;
 
-                joints[side + 'Elbow'] = new THREE.Group();
-                joints[side + 'Elbow'].position.set(0, -0.3, 0);
-                joints[side + 'UpperArm'].add(joints[side + 'Elbow']);
+                const myElbow = new THREE.Group();
+                myElbow.position.set(0, -0.3, 0);
+                myElbow.add(myMakeBone(0.28, 0.025, -1));
+                myMakeBall(myElbow, 0.033, 0, 0, 0, 0xf43f5e);
+                myMakeBall(myElbow, 0.035, 0, -0.28, 0, 0xf43f5e);
+                myShoulder.add(myElbow);
+                myJoints[side + 'Elbow'] = myElbow;
 
-                joints[side + 'LowerArm'] = createBoneMesh(0.28, 0.025);
-                joints[side + 'Elbow'].add(joints[side + 'LowerArm']);
+                const myHip = new THREE.Group();
+                myHip.position.set(0.1 * mySign, -0.06, 0);
+                myHip.add(myMakeBone(0.4, 0.04, -1));
+                myMakeBall(myHip, 0.05, 0, 0, 0, 0xf43f5e);
+                myJoints.pelvis.add(myHip);
+                myJoints[side + 'Hip'] = myHip;
 
-                // Legs
-                joints[side + 'Hip'] = new THREE.Group();
-                joints[side + 'Hip'].position.set(0.1 * sign, -0.06, 0);
-                joints.pelvis.add(joints[side + 'Hip']);
+                const myKnee = new THREE.Group();
+                myKnee.position.set(0, -0.4, 0);
+                myKnee.add(myMakeBone(0.38, 0.03, -1));
+                myMakeBall(myKnee, 0.04, 0, 0, 0, 0xf43f5e);
+                myHip.add(myKnee);
+                myJoints[side + 'Knee'] = myKnee;
 
-                joints[side + 'UpperLeg'] = createBoneMesh(0.4, 0.04);
-                joints[side + 'Hip'].add(joints[side + 'UpperLeg']);
-
-                joints[side + 'Knee'] = new THREE.Group();
-                joints[side + 'Knee'].position.set(0, -0.4, 0);
-                joints[side + 'UpperLeg'].add(joints[side + 'Knee']);
-
-                joints[side + 'LowerLeg'] = createBoneMesh(0.38, 0.03);
-                joints[side + 'Knee'].add(joints[side + 'LowerLeg']);
+                const myAnkle = new THREE.Group();
+                myAnkle.position.set(0, -0.38, 0);
+                myMakeBall(myAnkle, 0.035, 0, 0, 0, 0xf43f5e);
+                const myFoot = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.2), myMat);
+                myFoot.position.set(0, -0.03, 0.06);
+                myAnkle.add(myFoot);
+                myKnee.add(myAnkle);
+                myJoints[side + 'Ankle'] = myAnkle;
             });
 
-            setupMuscleActuators();
+            mySetupMuscles();
         }
 
-        function addMuscle(name, pA, lA, pB, lB, radius = 0.022) {
-            const anchorA = new THREE.Object3D(); anchorA.position.copy(lA); pA.add(anchorA);
-            const anchorB = new THREE.Object3D(); anchorB.position.copy(lB); pB.add(anchorB);
+        function myAddMuscle(name, parentA, localA, parentB, localB, radius) {
+            const myAnchorA = new THREE.Object3D();
+            myAnchorA.position.copy(localA);
+            parentA.add(myAnchorA);
+            const myAnchorB = new THREE.Object3D();
+            myAnchorB.position.copy(localB);
+            parentB.add(myAnchorB);
 
-            const mesh = new THREE.Mesh(
+            const myMesh = new THREE.Mesh(
                 new THREE.CylinderGeometry(radius, radius, 1, 12),
                 new THREE.MeshStandardMaterial({ color: 0x06b6d4, roughness: 0.3, emissive: 0x0284c7, emissiveIntensity: 0.2 })
             );
-            scene.add(mesh);
-            muscles.push({ name, mesh, anchorA, anchorB });
+            myScene.add(myMesh);
+            myMuscles.push({ name: name, mesh: myMesh, anchorA: myAnchorA, anchorB: myAnchorB });
         }
 
-        function setupMuscleActuators() {
-            addMuscle('Left Bicep', joints.leftShoulder, new THREE.Vector3(0.01, -0.05, 0.02), joints.leftElbow, new THREE.Vector3(0, -0.06, 0.02), 0.024);
-            addMuscle('Left Tricep', joints.leftShoulder, new THREE.Vector3(-0.01, -0.05, -0.02), joints.leftElbow, new THREE.Vector3(0, -0.06, -0.02), 0.024);
-            addMuscle('Right Bicep', joints.rightShoulder, new THREE.Vector3(-0.01, -0.05, 0.02), joints.rightElbow, new THREE.Vector3(0, -0.06, 0.02), 0.024);
-            addMuscle('Right Tricep', joints.rightShoulder, new THREE.Vector3(0.01, -0.05, -0.02), joints.rightElbow, new THREE.Vector3(0, -0.06, -0.02), 0.024);
-            addMuscle('Left Quad', joints.leftHip, new THREE.Vector3(0, -0.05, 0.03), joints.leftKnee, new THREE.Vector3(0, -0.05, 0.03), 0.032);
-            addMuscle('Left Hamstring', joints.leftHip, new THREE.Vector3(0, -0.05, -0.03), joints.leftKnee, new THREE.Vector3(0, -0.05, -0.03), 0.03);
-            addMuscle('Right Quad', joints.rightHip, new THREE.Vector3(0, -0.05, 0.03), joints.rightKnee, new THREE.Vector3(0, -0.05, 0.03), 0.032);
-            addMuscle('Right Hamstring', joints.rightHip, new THREE.Vector3(0, -0.05, -0.03), joints.rightKnee, new THREE.Vector3(0, -0.05, -0.03), 0.03);
+        function mySetupMuscles() {
+            const v = (x, y, z) => new THREE.Vector3(x, y, z);
+            addSide('Left', 'left', 1);
+            addSide('Right', 'right', -1);
+
+            function addSide(label, side, sign) {
+                myAddMuscle(label + ' Bicep', myJoints[side + 'Shoulder'], v(0.01 * sign, -0.05, 0.02), myJoints[side + 'Elbow'], v(0, -0.06, 0.02), 0.024);
+                myAddMuscle(label + ' Tricep', myJoints[side + 'Shoulder'], v(-0.01 * sign, -0.05, -0.02), myJoints[side + 'Elbow'], v(0, -0.06, -0.02), 0.024);
+                myAddMuscle(label + ' Deltoid', myJoints.chest, v(0.1 * sign, 0.05, 0.0), myJoints[side + 'Shoulder'], v(0.02 * sign, -0.12, 0), 0.026);
+                myAddMuscle(label + ' Quad', myJoints[side + 'Hip'], v(0, -0.05, 0.03), myJoints[side + 'Knee'], v(0, -0.05, 0.03), 0.032);
+                myAddMuscle(label + ' Hamstring', myJoints[side + 'Hip'], v(0, -0.05, -0.03), myJoints[side + 'Knee'], v(0, -0.05, -0.03), 0.03);
+                myAddMuscle(label + ' Hip Flexor', myJoints.pelvis, v(0.07 * sign, 0.04, 0.05), myJoints[side + 'Hip'], v(0, -0.14, 0.03), 0.028);
+            }
         }
 
-        function updateMuscleActuators() {
-            const pA = new THREE.Vector3(), pB = new THREE.Vector3();
-            muscles.forEach(m => {
-                m.anchorA.getWorldPosition(pA);
-                m.anchorB.getWorldPosition(pB);
-                const dist = pA.distanceTo(pB);
-                m.mesh.position.copy(pA).add(pB).multiplyScalar(0.5);
-                m.mesh.scale.set(1, dist, 1);
-                m.mesh.lookAt(pB);
+        function myUpdateMuscles() {
+            const myA = new THREE.Vector3(), myB = new THREE.Vector3();
+            const a = myState.angles;
+            myMuscles.forEach(m => {
+                m.anchorA.getWorldPosition(myA);
+                m.anchorB.getWorldPosition(myB);
+                m.mesh.position.copy(myA).add(myB).multiplyScalar(0.5);
+                m.mesh.scale.set(1, myA.distanceTo(myB), 1);
+                m.mesh.lookAt(myB);
                 m.mesh.rotateX(Math.PI / 2);
 
-                let tension = 0.2;
-                if (m.name.includes('Bicep')) {
-                    const angle = m.name.includes('Left') ? state.jointAngles.leftElbow : state.jointAngles.rightElbow;
-                    tension = Math.max(0, (160 - angle) / 120);
-                } else if (m.name.includes('Quad')) {
-                    const angle = m.name.includes('Left') ? state.jointAngles.leftKnee : state.jointAngles.rightKnee;
-                    tension = Math.max(0, (170 - angle) / 110);
-                }
+                const mySide = m.name.includes('Left') ? 'left' : 'right';
+                let myTension = 0.2;
+                if (m.name.includes('Bicep')) myTension = Math.max(0, (160 - a[mySide + 'Elbow']) / 120);
+                else if (m.name.includes('Quad')) myTension = Math.max(0, (170 - a[mySide + 'Knee']) / 110);
+                else if (m.name.includes('Deltoid')) myTension = Math.max(0, a[mySide + 'Shoulder'] / 120);
+                else if (m.name.includes('Hip Flexor')) myTension = Math.max(0, a[mySide + 'Hip'] / 90);
+                myTension = Math.min(1, myTension);
 
-                if (state.heatmapEnabled) {
-                    const col = new THREE.Color(0x06b6d4).lerp(new THREE.Color(0xef4444), tension);
-                    m.mesh.material.color.copy(col);
-                    m.mesh.material.emissive.copy(col);
-                    m.mesh.material.emissiveIntensity = 0.1 + tension * 0.6;
+                if (myState.heatmap) {
+                    const myColor = new THREE.Color(0x06b6d4).lerp(new THREE.Color(0xef4444), myTension);
+                    m.mesh.material.color.copy(myColor);
+                    m.mesh.material.emissive.copy(myColor);
+                    m.mesh.material.emissiveIntensity = 0.1 + myTension * 0.6;
                 } else {
                     m.mesh.material.color.setHex(0x38bdf8);
+                    m.mesh.material.emissive.setHex(0x0284c7);
+                    m.mesh.material.emissiveIntensity = 0.2;
                 }
             });
         }
 
-        function sync3DSkeleton() {
-            const rad = deg => (deg * Math.PI) / 180;
-            joints.leftElbow.rotation.x = -rad(180 - state.jointAngles.leftElbow);
-            joints.rightElbow.rotation.x = -rad(180 - state.jointAngles.rightElbow);
-            joints.leftKnee.rotation.x = rad(180 - state.jointAngles.leftKnee);
-            joints.rightKnee.rotation.x = rad(180 - state.jointAngles.rightKnee);
+        const myAnkleA = new THREE.Vector3();
+        const myAnkleB = new THREE.Vector3();
 
-            const avgKnee = (state.jointAngles.leftKnee + state.jointAngles.rightKnee) / 2;
-            joints.pelvis.position.y = 0.9 - Math.max(0, (180 - avgKnee) / 180) * 0.35;
+        function mySync3D() {
+            const a = myState.angles;
+            const myPlane = myState.preset ? myState.presetPlane : myState.plane;
+            const myRad = deg => deg * Math.PI / 180;
 
-            updateMuscleActuators();
-        }
+            myJoints.spine.rotation.z = -myRad(a.trunkLean);
+            myJoints.head.rotation.z = -myRad(a.headTilt);
+            myJoints.head.rotation.y = myRad(a.headTurn);
 
-        // --- KINEMATICS & POSENET ---
-        function calculateAngle(p1, p2, p3) {
-            if (!p1 || !p2 || !p3) return 180;
-            let angle = Math.abs(Math.atan2(p3.y - p2.y, p3.x - p2.x) - Math.atan2(p1.y - p2.y, p1.x - p2.x)) * 180 / Math.PI;
-            if (angle > 180) angle = 360 - angle;
-            return Math.round(angle);
-        }
+            ['left', 'right'].forEach(side => {
+                const mySign = side === 'left' ? 1 : -1;
+                const myShoulder = myJoints[side + 'Shoulder'];
+                const myHip = myJoints[side + 'Hip'];
+                myShoulder.rotation.set(0, 0, 0);
+                myHip.rotation.set(0, 0, 0);
 
-        async function processPoseNet() {
-            if (state.isCameraActive && state.net && webcamVideo.readyState === 4) {
-                const pose = await state.net.estimateSinglePose(webcamVideo, { flipHorizontal: true });
-                confidenceScoreEl.innerText = `Score: ${pose.score.toFixed(2)}`;
-
-                drawPoseOverlay(pose);
-                extractKinematics(pose.keypoints);
-
-                if (state.isRecording && pose.score > 0.3) {
-                    state.recordedFrames.push({
-                        time: (performance.now() - state.recStartTime) / 1000,
-                        keypoints: pose.keypoints
-                    });
-                    document.getElementById('rec-status').innerText = `Recording... Frames: ${state.recordedFrames.length}`;
+                if (myPlane === 'frontal') {
+                    myShoulder.rotation.z = mySign * myRad(a[side + 'Shoulder']);
+                    myHip.rotation.z = mySign * myRad(a[side + 'Hip']);
+                } else {
+                    myShoulder.rotation.x = -myRad(a[side + 'Shoulder']);
+                    myHip.rotation.x = -myRad(a[side + 'Hip']);
                 }
-            } else if (state.activePreset) {
-                synthesizePresetMotion();
+                myJoints[side + 'Elbow'].rotation.x = -myRad(180 - a[side + 'Elbow']);
+                myJoints[side + 'Knee'].rotation.x = myRad(180 - a[side + 'Knee']);
+            });
+
+            myJoints.pelvis.position.y = 0.9;
+            myJoints.pelvis.updateMatrixWorld(true);
+            myJoints.leftAnkle.getWorldPosition(myAnkleA);
+            myJoints.rightAnkle.getWorldPosition(myAnkleB);
+            myJoints.pelvis.position.y = 0.9 + (0.06 - Math.min(myAnkleA.y, myAnkleB.y));
+
+            myUpdateMuscles();
+        }
+
+        function myAngle(p1, p2, p3) {
+            if (!p1 || !p2 || !p3) return null;
+            const ax = p1.x - p2.x, ay = p1.y - p2.y;
+            const bx = p3.x - p2.x, by = p3.y - p2.y;
+            const myLen = Math.hypot(ax, ay) * Math.hypot(bx, by);
+            if (myLen < 1e-6) return null;
+            const myCos = Math.max(-1, Math.min(1, (ax * bx + ay * by) / myLen));
+            return Math.acos(myCos) * 180 / Math.PI;
+        }
+
+        function mySmooth(key, value) {
+            if (value === null || isNaN(value)) return;
+            myState.angles[key] += (value - myState.angles[key]) * 0.5;
+        }
+
+        function myGetPoints(keypoints) {
+            const myPoints = {};
+            keypoints.forEach(k => {
+                if (k.score >= 0.3) myPoints[k.part] = k.position;
+            });
+            return myPoints;
+        }
+
+        function myExtractKinematics(keypoints) {
+            const p = myGetPoints(keypoints);
+
+            ['left', 'right'].forEach(side => {
+                mySmooth(side + 'Elbow', myAngle(p[side + 'Shoulder'], p[side + 'Elbow'], p[side + 'Wrist']));
+                mySmooth(side + 'Knee', myAngle(p[side + 'Hip'], p[side + 'Knee'], p[side + 'Ankle']));
+                mySmooth(side + 'Shoulder', myAngle(p[side + 'Hip'], p[side + 'Shoulder'], p[side + 'Elbow']));
+                const myHipAngle = myAngle(p[side + 'Shoulder'], p[side + 'Hip'], p[side + 'Knee']);
+                mySmooth(side + 'Hip', myHipAngle === null ? null : 180 - myHipAngle);
+            });
+
+            if (p.leftShoulder && p.rightShoulder && p.leftHip && p.rightHip) {
+                const myTopX = (p.leftShoulder.x + p.rightShoulder.x) / 2;
+                const myTopY = (p.leftShoulder.y + p.rightShoulder.y) / 2;
+                const myBotX = (p.leftHip.x + p.rightHip.x) / 2;
+                const myBotY = (p.leftHip.y + p.rightHip.y) / 2;
+                mySmooth('trunkLean', Math.atan2(myTopX - myBotX, -(myTopY - myBotY)) * 180 / Math.PI);
             }
-            sync3DSkeleton();
+
+            const myL = (p.leftEar && p.rightEar) ? p.leftEar : p.leftEye;
+            const myR = (p.leftEar && p.rightEar) ? p.rightEar : p.rightEye;
+            if (myL && myR) {
+                const myRoll = Math.atan2(myL.y - myR.y, myL.x - myR.x) * 180 / Math.PI;
+                mySmooth('headTilt', myRoll - myState.angles.trunkLean);
+            }
+
+            if (p.nose && p.leftEye && p.rightEye) {
+                const myEyeMid = (p.leftEye.x + p.rightEye.x) / 2;
+                const myEyeDist = Math.abs(p.leftEye.x - p.rightEye.x) || 1;
+                const myRatio = Math.max(-1, Math.min(1, (p.nose.x - myEyeMid) / (myEyeDist * 0.9)));
+                mySmooth('headTurn', Math.asin(myRatio) * 180 / Math.PI);
+            }
+
+            myUpdateUI();
         }
 
-        function extractKinematics(keypoints) {
-            const get = name => keypoints.find(k => k.part === name && k.score > 0.3);
-            const shL = get('leftShoulder'), elL = get('leftElbow'), wrL = get('leftWrist');
-            const shR = get('rightShoulder'), elR = get('rightElbow'), wrR = get('rightWrist');
-            const hpL = get('leftHip'), knL = get('leftKnee'), anL = get('leftAnkle');
-            const hpR = get('rightHip'), knR = get('rightKnee'), anR = get('rightAnkle');
+        function myDrawCanvas() {
+            if (!myState.cameraOn || myVideo.readyState < 2 || !myVideo.videoWidth) return;
+            if (myCanvas.width !== myVideo.videoWidth) {
+                myCanvas.width = myVideo.videoWidth;
+                myCanvas.height = myVideo.videoHeight;
+            }
+            myCtx.drawImage(myVideo, 0, 0, myCanvas.width, myCanvas.height);
 
-            if (shL && elL && wrL) state.jointAngles.leftElbow = calculateAngle(shL.position, elL.position, wrL.position);
-            if (shR && elR && wrR) state.jointAngles.rightElbow = calculateAngle(shR.position, elR.position, wrR.position);
-            if (hpL && knL && anL) state.jointAngles.leftKnee = calculateAngle(hpL.position, knL.position, anL.position);
-            if (hpR && knR && anR) state.jointAngles.rightKnee = calculateAngle(hpR.position, knR.position, anR.position);
+            const myPose = myState.lastPose;
+            if (!myPose) return;
 
-            updateAngleUI();
-        }
-
-        function drawPoseOverlay(pose) {
-            poseCanvas.width = webcamVideo.videoWidth;
-            poseCanvas.height = webcamVideo.videoHeight;
-            canvasCtx.clearRect(0, 0, poseCanvas.width, poseCanvas.height);
-
-            if (!state.showSkeleton && !state.showPoints) return;
-            const pairs = posenet.getAdjacentKeyPoints(pose.keypoints, 0.3);
-
-            if (state.showSkeleton) {
-                pairs.forEach(([p1, p2]) => {
-                    canvasCtx.beginPath();
-                    canvasCtx.moveTo(p1.position.x, p1.position.y);
-                    canvasCtx.lineTo(p2.position.x, p2.position.y);
-                    canvasCtx.lineWidth = 3; canvasCtx.strokeStyle = '#818cf8'; canvasCtx.stroke();
+            if (myState.showSkeleton) {
+                posenet.getAdjacentKeyPoints(myPose.keypoints, 0.3).forEach(pair => {
+                    myCtx.beginPath();
+                    myCtx.moveTo(pair[0].position.x, pair[0].position.y);
+                    myCtx.lineTo(pair[1].position.x, pair[1].position.y);
+                    myCtx.lineWidth = 5;
+                    myCtx.strokeStyle = '#818cf8';
+                    myCtx.stroke();
                 });
             }
-            if (state.showPoints) {
-                pose.keypoints.forEach(kp => {
+            if (myState.showPoints) {
+                myPose.keypoints.forEach(kp => {
                     if (kp.score > 0.3) {
-                        canvasCtx.beginPath();
-                        canvasCtx.arc(kp.position.x, kp.position.y, 4, 0, 2 * Math.PI);
-                        canvasCtx.fillStyle = '#f43f5e'; canvasCtx.fill();
+                        myCtx.beginPath();
+                        myCtx.arc(kp.position.x, kp.position.y, 6, 0, 2 * Math.PI);
+                        myCtx.fillStyle = '#f43f5e';
+                        myCtx.fill();
                     }
                 });
             }
         }
 
-        function synthesizePresetMotion() {
-            state.presetFrame += 0.04;
-            const t = state.presetFrame;
-            if (state.activePreset === 'idle') {
-                state.jointAngles.leftElbow = 175 + Math.sin(t) * 3;
-                state.jointAngles.rightElbow = 175 + Math.cos(t) * 3;
-                state.jointAngles.leftKnee = 175; state.jointAngles.rightKnee = 175;
-            } else if (state.activePreset === 'squat') {
-                const s = (Math.sin(t) + 1) / 2;
-                state.jointAngles.leftKnee = 175 - s * 85;
-                state.jointAngles.rightKnee = 175 - s * 85;
-            } else if (state.activePreset === 'curl') {
-                const s = (Math.sin(t) + 1) / 2;
-                state.jointAngles.rightElbow = 170 - s * 125;
+        async function myRunPoseNet() {
+            myState.busy = true;
+            try {
+                const myPose = await myState.net.estimateSinglePose(myVideo, { flipHorizontal: false });
+                if (!myState.cameraOn) return;
+                myState.lastPose = myPose;
+                myScoreEl.innerText = `Score: ${myPose.score.toFixed(2)}`;
+                myExtractKinematics(myPose.keypoints);
+
+                if (myState.recording && myPose.score > 0.3) {
+                    myState.frames.push({
+                        time: (performance.now() - myState.recStart) / 1000,
+                        keypoints: myPose.keypoints
+                    });
+                    myRecEl.innerText = `Recording... Frames: ${myState.frames.length}`;
+                }
+            } catch (err) {
+                console.error(err);
+            } finally {
+                myState.busy = false;
             }
-            confidenceScoreEl.innerText = 'Preset Active';
-            updateAngleUI();
         }
 
-        function updateAngleUI() {
-            anglesEl.leftElbow.innerText = `${state.jointAngles.leftElbow}°`;
-            anglesEl.rightElbow.innerText = `${state.jointAngles.rightElbow}°`;
-            anglesEl.leftKnee.innerText = `${state.jointAngles.leftKnee}°`;
-            anglesEl.rightKnee.innerText = `${state.jointAngles.rightKnee}°`;
+        function mySynthesizePreset() {
+            myState.presetFrame += 0.04;
+            const t = myState.presetFrame;
+            const s = (Math.sin(t) + 1) / 2;
+            const a = myState.angles;
+
+            a.leftElbow = 175; a.rightElbow = 175;
+            a.leftKnee = 175; a.rightKnee = 175;
+            a.leftShoulder = 0; a.rightShoulder = 0;
+            a.leftHip = 0; a.rightHip = 0;
+            a.trunkLean = 0; a.headTilt = 0; a.headTurn = 0;
+
+            if (myState.preset === 'idle') {
+                a.leftShoulder = 90 + Math.sin(t) * 3;
+                a.rightShoulder = 90 + Math.cos(t) * 3;
+                a.headTurn = Math.sin(t * 0.5) * 25;
+            } else if (myState.preset === 'squat') {
+                a.leftKnee = 175 - s * 85; a.rightKnee = 175 - s * 85;
+                a.leftHip = s * 70; a.rightHip = s * 70;
+                a.leftShoulder = s * 80; a.rightShoulder = s * 80;
+            } else if (myState.preset === 'curl') {
+                a.rightElbow = 170 - s * 125;
+            }
+            myScoreEl.innerText = 'Preset Active';
+            myUpdateUI();
         }
 
-        function updatePresetButtons(activeKey) {
+        function myUpdateUI() {
+            for (const key in myAngleEls) {
+                myAngleEls[key].innerText = `${Math.round(myState.angles[key])}°`;
+            }
+        }
+
+        function mySetPreset(key) {
+            if (myState.cameraOn) myStopCamera();
+            myState.preset = key;
+            myState.presetPlane = key === 'squat' ? 'sagittal' : 'frontal';
+            myUpdatePresetButtons(key);
+        }
+
+        function myUpdatePresetButtons(activeKey) {
             document.querySelectorAll('.preset-btn').forEach(btn => {
                 btn.classList.remove('bg-indigo-600/30', 'border-indigo-500/50', 'text-indigo-200');
                 btn.classList.add('bg-slate-800', 'border-slate-700', 'text-slate-300');
             });
             if (activeKey) {
-                const activeBtn = document.getElementById(`preset-${activeKey}`);
-                if (activeBtn) {
-                    activeBtn.classList.remove('bg-slate-800', 'border-slate-700', 'text-slate-300');
-                    activeBtn.classList.add('bg-indigo-600/30', 'border-indigo-500/50', 'text-indigo-200');
-                }
+                const myBtn = document.getElementById(`preset-${activeKey}`);
+                myBtn.classList.remove('bg-slate-800', 'border-slate-700', 'text-slate-300');
+                myBtn.classList.add('bg-indigo-600/30', 'border-indigo-500/50', 'text-indigo-200');
             }
         }
 
-        function animate() {
-            requestAnimationFrame(animate);
-            const now = performance.now();
-            state.fps = Math.round(1000 / (now - state.lastFrameTime));
-            state.lastFrameTime = now;
-            fpsCounter.innerText = state.fps.toString().padStart(2, '0');
+        function myAnimate() {
+            requestAnimationFrame(myAnimate);
+            const myNow = performance.now();
+            myFpsEl.innerText = Math.round(1000 / (myNow - myState.lastTime)).toString().padStart(2, '0');
+            myState.lastTime = myNow;
 
-            processPoseNet();
-            controls.update();
-            renderer.render(scene, camera);
+            if (myState.cameraOn) {
+                myDrawCanvas();
+                if (myState.net && !myState.busy && myVideo.readyState >= 2) myRunPoseNet();
+            } else if (myState.preset) {
+                mySynthesizePreset();
+            }
+
+            mySync3D();
+            myControls.update();
+            myRenderer.render(myScene, myCamera);
         }
 
-        window.onload = async function () {
-            initThreeJS();
-            await initPoseNet();
-
-            toggleCamBtn.addEventListener('click', toggleCamera);
-            document.getElementById('toggle-skeleton-overlay').addEventListener('change', e => state.showSkeleton = e.target.checked);
-            document.getElementById('toggle-points-overlay').addEventListener('change', e => state.showPoints = e.target.checked);
-            document.getElementById('toggle-heatmap').addEventListener('change', e => state.heatmapEnabled = e.target.checked);
-
-            ['idle', 'squat', 'curl'].forEach(key => {
-                document.getElementById(`preset-${key}`).addEventListener('click', () => {
-                    if (state.isCameraActive) stopCamera();
-                    state.activePreset = key;
-                    updatePresetButtons(key);
-                });
-            });
-
-            document.getElementById('reset-cam-btn').addEventListener('click', () => {
-                camera.position.set(0, 1.2, 3.8);
-                controls.target.set(0, 0.9, 0);
-            });
-
-            animate();
+        window.onload = function () {
+            myInitThree();
+            myAnimate();
+            myInitPoseNet();
         };
     </script>
 </body>
