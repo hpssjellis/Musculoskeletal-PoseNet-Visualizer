@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PoseNet Motion Capture Recorder</title>
+    <!-- Include TensorFlow.js and PoseNet from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #222; color: #fff; margin-top: 20px; }
+        #canvas-container { position: relative; display: inline-block; margin-top: 15px; }
+        video { display: none; } /* Hide raw video, draw to canvas with skeleton overlay */
+        .controls { margin: 15px; }
+        button { padding: 10px 20px; font-size: 16px; font-weight: bold; cursor: pointer; border: none; border-radius: 5px; margin: 0 5px; }
+        #startBtn { background-color: #28a745; color: white; }
+        #stopBtn { background-color: #dc3545; color: white; }
+        #status { font-weight: bold; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <h2>PoseNet Musculoskeletal Motion Capture</h2>
+    
+    <div class="controls">
+        <button id="startBtn" onclick="startRecording()">Start Recording</button>
+        <button id="stopBtn" onclick="stopRecording()" disabled>Stop & Download JSON</button>
+        <div id="status">Status: Idle</div>
+    </div>
+
+    <div id="canvas-container">
+        <video id="webcam" playsinline></video>
+        <canvas id="output"></canvas>
+    </div>
+
+<script>
+    let video, canvas, ctx, net;
+    let isRecording = false;
+    let recordedFrames = [];
+    let startTime = 0;
+
+    async function init() {
+        video = document.getElementById('webcam');
+        canvas = document.getElementById('output');
+        ctx = canvas.getContext('2d');
+
+        // Setup webcam stream
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        await new Promise((resolve) => { video.onloadedmetadata = () => { resolve(); }; });
+        video.play();
+
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        document.getElementById('status').innerText = "Status: Loading PoseNet...";
+        net = await posenet.load();
+        document.getElementById('status').innerText = "Status: Ready to Record";
+
+        poseDetectionFrame();
+    }
+
+    async function poseDetectionFrame() {
+        const pose = await net.estimateSinglePose(video, { flipHorizontal: false });
+
+        // Draw video frame and skeleton
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        if (pose && pose.score > 0.3) {
+            drawSkeleton(pose.keypoints, 0.5, ctx);
+            
+            // Record data if active
+            if (isRecording) {
+                recordedFrames.push({
+                    time: (performance.now() - startTime) / 1000, // seconds elapsed
+                    keypoints: pose.keypoints
+                });
+                document.getElementById('status').innerText = `Status: Recording... Frames: ${recordedFrames.length}`;
+            }
+        }
+
+        requestAnimationFrame(poseDetectionFrame);
+    }
+
+    function drawSkeleton(keypoints, minConfidence, ctx) {
+        const chordColor = '#00ffcc';
+        const keypointData = posenet.getAdjacentKeyPoints(keypoints, minConfidence);
+
+        keypointData.forEach((keypoints) => {
+            ctx.beginPath();
+            ctx.moveTo(keypoints[0].position.x, keypoints[0].position.y);
+            ctx.lineTo(keypoints[1].position.x, keypoints[1].position.y);
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = chordColor;
+            ctx.stroke();
+        });
+
+        keypoints.forEach((kp) => {
+            if (kp.score >= minConfidence) {
+                ctx.beginPath();
+                ctx.arc(kp.position.x, kp.position.y, 4, 0, 2 * Math.PI);
+                ctx.fillStyle = '#ff0055';
+                ctx.fill();
+            }
+        });
+    }
+
+    function startRecording() {
+        recordedFrames = [];
+        isRecording = true;
+        startTime = performance.now();
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+    }
+
+    function stopRecording() {
+        isRecording = false;
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('stopBtn').disabled = true;
+        document.getElementById('status').innerText = `Status: Saved ${recordedFrames.length} frames!`;
+
+        // Package and trigger JSON file download
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(recordedFrames));
+        const downloadAnchor = document.createElement('a');
+        downloadAnchor.setAttribute("href", dataStr);
+        downloadAnchor.setAttribute("download", "pose_motion_data.json");
+        document.body.appendChild(downloadAnchor);
+        downloadAnchor.click();
+        downloadAnchor.remove();
+    }
+
+    window.onload = init;
+</script>
+
+</body>
+</html>
