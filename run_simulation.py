@@ -1,169 +1,255 @@
 import os
-import subprocess
+import sys
 import json
 import time
+import subprocess
+
+# Headless Linux (no display, e.g. Colab/servers) needs EGL for offscreen rendering.
+# Must be set BEFORE importing mujoco. Harmless on Windows/macOS (skipped there).
+if sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+    os.environ.setdefault("MUJOCO_GL", "egl")
+
 import cv2
 import numpy as np
 import mujoco
 
+# =============================================================================
+# SETTINGS
+# =============================================================================
+MODEL_DIR = "MS-Human-700"
+XML_PATH = os.path.join(MODEL_DIR, "MS-Human-700.xml")
+JSON_FILENAME = "pose_motion_data.json"
+OUTPUT_VIDEO = "musculoskeletal_output.mp4"
+
+WIDTH, HEIGHT = 1280, 720
+TARGET_FPS = 5                     # 5 FPS = 200 ms per frame in the saved video
+PREVIEW_DELAY_SEC = 0.0            # set to 0.2 only if you want to watch it process slowly
+
+# "frontal"  : person faces the camera -> arms/legs spreading sideways (abduction)
+# "sagittal" : person seen from the side -> arms/legs swinging forward (flexion)
+MOTION_PLANE = "frontal"
+
+TURN_SPEED_PER_FRAME = 0.03        # radians per frame, spin about the VERTICAL (world Z) axis
+MIN_SCORE = 0.3                    # ignore PoseNet keypoints below this confidence
+SMOOTHING = 0.6                    # 1.0 = no smoothing, lower = smoother but laggier
+
 print("=== STARTING SIMULATION PIPELINE ===")
 
-# Ensure the MS-Human-700 repository/folder is present locally
-model_dir = "MS-Human-700"
-xml_filename = "MS-Human-700.xml"
-xml_path = os.path.join(model_dir, xml_filename)
-
-if not os.path.exists(xml_path):
-    print(f"[Model Setup] '{xml_path}' not found locally. Cloning repository from GitHub...")
+# =============================================================================
+# 1. MODEL SETUP
+# =============================================================================
+if not os.path.exists(XML_PATH):
+    print(f"[Model Setup] '{XML_PATH}' not found locally. Cloning repository from GitHub...")
     try:
-        subprocess.run([
-            "git", "clone", 
-            "https://github.com/LNSGroup/MS-Human-700.git", 
-            model_dir
-        ], check=True)
+        subprocess.run(["git", "clone", "https://github.com/LNSGroup/MS-Human-700.git", MODEL_DIR], check=True)
         print("[Model Setup] Clone completed successfully.")
     except Exception as e:
         raise RuntimeError(f"Failed to clone repository automatically: {e}")
 else:
-    print(f"[Model Setup] Found existing model file at: {xml_path}")
+    print(f"[Model Setup] Found existing model file at: {XML_PATH}")
 
-# 1. Load the recorded JSON file from your browser
-json_filename = "pose_motion_data.json"
-print(f"[Data Loading] Looking for '{json_filename}'...")
-
-if os.path.exists(json_filename):
-    with open(json_filename, "r") as f:
+# =============================================================================
+# 2. LOAD RECORDED JSON FROM THE BROWSER
+# =============================================================================
+print(f"[Data Loading] Looking for '{JSON_FILENAME}'...")
+if os.path.exists(JSON_FILENAME):
+    with open(JSON_FILENAME, "r") as f:
         motion_data = json.load(f)
-    print(f"[Data Loading] Success! Loaded {len(motion_data)} frames from {json_filename}.")
+    print(f"[Data Loading] Success! Loaded {len(motion_data)} frames from {JSON_FILENAME}.")
 else:
-    print(f"[Data Loading] WARNING: '{json_filename}' was NOT found in this directory!")
+    print(f"[Data Loading] WARNING: '{JSON_FILENAME}' was NOT found in this directory!")
     motion_data = [{"keypoints": [], "time": i} for i in range(60)]
 
-# 2. Load the MS-Human-700 MuJoCo model
-print(f"[MuJoCo] Loading model configuration from {xml_path}...")
-model = mujoco.MjModel.from_xml_path(xml_path)
+# =============================================================================
+# 3. LOAD MUJOCO MODEL
+# =============================================================================
+print(f"[MuJoCo] Loading model configuration from {XML_PATH}...")
+model = mujoco.MjModel.from_xml_path(XML_PATH)
 data = mujoco.MjData(model)
 print(f"[MuJoCo] Model loaded successfully! Total joints in model: {model.njnt}")
 
-# Diagnostic helper: Print discovered joints
-print("\n[Joint Inspection] Scanning available model joints...")
-discovered_joints = []
-for j in range(model.njnt):
-    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
-    if name:
-        discovered_joints.append(name)
-print(f"[Joint Inspection] Found {len(discovered_joints)} named joints in the model.")
-print(f"[Joint Inspection] Sample joints: {discovered_joints[:10]} ...\n")
 
-def find_joint_id_by_keyword(model, keyword):
-    for j in range(model.njnt):
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
-        if name and keyword.lower() in name.lower():
-            return j, name
-    return -1, None
+def joint_id(name):
+    return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
 
-elbow_joint_id, elbow_joint_name = find_joint_id_by_keyword(model, "elbow")
-if elbow_joint_id != -1:
-    print(f"[Match Found] ✅ Correct elbow joint identified: '{elbow_joint_name}' (ID: {elbow_joint_id})")
-else:
-    print("[Match Warning] Could not find 'elbow'. Searching for 'arm'...")
-    elbow_joint_id, elbow_joint_name = find_joint_id_by_keyword(model, "arm")
-    if elbow_joint_id != -1:
-        print(f"[Match Found] ✅ Correct arm joint identified: '{elbow_joint_name}' (ID: {elbow_joint_id})")
-    else:
-        print("[Match Warning] ❌ No matching arm/elbow joint found.")
 
-# 3. Setup offscreen renderer and video writer
-width, height = 1280, 720
-print(f"\n[Renderer] Initializing offscreen renderer ({width}x{height}) and video writer...")
-renderer = mujoco.Renderer(model, height=height, width=width)
+def body_id(name):
+    return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
 
-# TARGET: 5 FPS = 200 ms delay between frames
-TARGET_FPS = 5
-out = cv2.VideoWriter(
-    "musculoskeletal_output.mp4", 
-    cv2.VideoWriter_fourcc(*'mp4v'), 
-    TARGET_FPS, 
-    (width, height)
-)
 
-print(f"\n=== STARTING FRAME PROCESSING & CONVERSION (Target Delay: 200 ms / frame) ===")
+# This model has NO free root joint. It is built like an OpenSim model:
+# pelvis_tx/ty/tz (slides) + pelvis_tilt/list/rotation (hinges). In the world frame
+# pelvis_ty moves straight UP (+Z) and pelvis_rotation spins about the vertical (+Z) axis.
+TURN_JOINT = joint_id("pelvis_rotation")
+LIFT_JOINT = joint_id("pelvis_ty")
+if TURN_JOINT == -1 or LIFT_JOINT == -1:
+    raise RuntimeError("Could not find pelvis_rotation / pelvis_ty in this model.")
 
-def calculate_angle(p1, p2, p3):
-    a = np.array([p1['x'], p1['y']])
-    b = np.array([p2['x'], p2['y']])
-    c = np.array([p3['x'], p3['y']])
-    
-    radians = np.arctan2(c[1] - b[1], c[0] - b[0]) - np.arctan2(a[1] - b[1], a[0] - b[0])
-    angle = np.abs(radians * 180.0 / np.pi)
-    if angle > 180.0:
-        angle = 360 - angle
-    return np.radians(angle)
+FOOT_BODIES = [b for b in (body_id(n) for n in ("calcn_r", "calcn_l", "toes_r", "toes_l")) if b != -1]
+
+# Every joint we drive (PoseNet has 17 keypoints, so these are all the joints it can measure)
+DRIVEN_JOINTS = [
+    "elbow_flexion_r", "elbow_flexion_l",
+    "knee_angle_r", "knee_angle_l",
+    "shoulder_elv_r", "shoulder_elv_l", "elv_angle_r", "elv_angle_l",
+    "hip_flexion_r", "hip_flexion_l", "hip_adduction_r", "hip_adduction_l",
+    "L5_S1_LB", "T12_L1_LB", "T1_head_neck_LB",
+]
+print("\n[Joint Mapping] PoseNet -> MS-Human-700 joints:")
+for name in DRIVEN_JOINTS:
+    jid = joint_id(name)
+    print(f"   {'OK     ' if jid != -1 else 'MISSING'} {name}" + (f" (ID {jid})" if jid != -1 else ""))
+DRIVEN_JOINTS = [n for n in DRIVEN_JOINTS if joint_id(n) != -1]
+
+# Remember how high the feet are in the neutral standing pose, so squats keep feet on the floor
+mujoco.mj_forward(model, data)
+REST_FOOT_Z = min(data.xpos[b][2] for b in FOOT_BODIES)
+
+# =============================================================================
+# 4. ANGLE MATH (all angles in 2D image space)
+# =============================================================================
+def interior_angle(a, b, c):
+    """Angle in degrees at point b between a-b-c (180 = straight line)."""
+    ba = np.array([a["x"] - b["x"], a["y"] - b["y"]])
+    bc = np.array([c["x"] - b["x"], c["y"] - b["y"]])
+    denom = np.linalg.norm(ba) * np.linalg.norm(bc)
+    if denom < 1e-6:
+        return None
+    return float(np.degrees(np.arccos(np.clip(np.dot(ba, bc) / denom, -1.0, 1.0))))
+
+
+def midpoint(a, b):
+    return {"x": (a["x"] + b["x"]) / 2.0, "y": (a["y"] + b["y"]) / 2.0}
+
+
+def compute_targets(kp):
+    """Turn PoseNet keypoints into {joint_name: radians} for every joint we can measure."""
+    t = {}
+    for side, s in (("left", "l"), ("right", "r")):
+        sh, el, wr = kp.get(side + "Shoulder"), kp.get(side + "Elbow"), kp.get(side + "Wrist")
+        hp, kn, an = kp.get(side + "Hip"), kp.get(side + "Knee"), kp.get(side + "Ankle")
+
+        # Elbow and knee: flexion = 180 - interior angle (0 = straight)
+        if sh and el and wr:
+            ang = interior_angle(sh, el, wr)
+            if ang is not None:
+                t[f"elbow_flexion_{s}"] = np.radians(180.0 - ang)
+        if hp and kn and an:
+            ang = interior_angle(hp, kn, an)
+            if ang is not None:
+                t[f"knee_angle_{s}"] = np.radians(180.0 - ang)
+
+        # Shoulder: how far the upper arm is lifted away from the torso (0 = hanging down)
+        if hp and sh and el:
+            ang = interior_angle(hp, sh, el)
+            if ang is not None:
+                t[f"shoulder_elv_{s}"] = np.radians(ang)
+                t[f"elv_angle_{s}"] = 0.0 if MOTION_PLANE == "frontal" else np.pi / 2
+
+        # Hip: how far the thigh is lifted away from the torso line (0 = standing)
+        if sh and hp and kn:
+            ang = interior_angle(sh, hp, kn)
+            if ang is not None:
+                lift = np.radians(180.0 - ang)
+                if MOTION_PLANE == "frontal":
+                    t[f"hip_adduction_{s}"] = -lift     # negative = leg moves outward
+                else:
+                    t[f"hip_flexion_{s}"] = lift        # positive = knee moves forward
+
+    # Trunk lean (side bend) from mid-hips -> mid-shoulders, signed
+    lean = 0.0
+    if all(k in kp for k in ("leftShoulder", "rightShoulder", "leftHip", "rightHip")):
+        top = midpoint(kp["leftShoulder"], kp["rightShoulder"])
+        bottom = midpoint(kp["leftHip"], kp["rightHip"])
+        lean = np.arctan2(top["x"] - bottom["x"], -(top["y"] - bottom["y"]))  # + = leans to image right
+        t["L5_S1_LB"] = -lean / 2.0     # model's side-bend axis is opposite in sign
+        t["T12_L1_LB"] = -lean / 2.0
+
+    # Head roll relative to the trunk, from the ears (eyes as a fallback)
+    for l_name, r_name in (("leftEar", "rightEar"), ("leftEye", "rightEye")):
+        if l_name in kp and r_name in kp:
+            roll = np.arctan2(kp[l_name]["y"] - kp[r_name]["y"], kp[l_name]["x"] - kp[r_name]["x"])
+            t["T1_head_neck_LB"] = -(roll - lean)
+            break
+    return t
+
+
+def clamp_to_joint_range(jid, value):
+    if model.jnt_limited[jid]:
+        lo, hi = model.jnt_range[jid]
+        return float(np.clip(value, lo, hi))
+    return float(value)
+
+
+# =============================================================================
+# 5. RENDERER, CAMERA, VIDEO WRITER
+# =============================================================================
+print(f"\n[Renderer] Initializing offscreen renderer ({WIDTH}x{HEIGHT}) and video writer...")
+renderer = mujoco.Renderer(model, height=HEIGHT, width=WIDTH)
+
+# Fixed camera in front of the person (+X is the direction the model faces, Z is up)
+cam = mujoco.MjvCamera()
+cam.lookat[:] = [0.0, 0.0, 0.85]
+cam.distance = 2.6
+cam.azimuth = 180
+cam.elevation = -8
+
+out = cv2.VideoWriter(OUTPUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), TARGET_FPS, (WIDTH, HEIGHT))
+if not out.isOpened():
+    raise RuntimeError("Could not open the video writer.")
+
+print(f"\n=== STARTING FRAME PROCESSING & CONVERSION (Target Delay: {int(1000 / TARGET_FPS)} ms / frame) ===")
 
 start_time = time.time()
 mapped_frames_count = 0
+current_pose = {}          # smoothed joint angles, persists between frames
+turn_angle = 0.0           # spin about the vertical Z axis
 
-# Rotation parameters for slow Z-axis turning
-current_z_angle = 0.0
-rotation_speed_per_frame = 0.03  # Adjust higher for faster spin, lower for slower spin
-
-# 4. Iterate through each recorded frame and apply pose data & rotation
+# =============================================================================
+# 6. MAIN LOOP
+# =============================================================================
 for i, frame in enumerate(motion_data):
     frame_start_time = time.time()
-    
-    keypoints_list = frame.get("keypoints", [])
-    keypoints = {kp['part']: kp['position'] for kp in keypoints_list if 'part' in kp and 'position' in kp}
-    
+
+    kp = {}
+    for k in frame.get("keypoints", []):
+        if "part" in k and "position" in k and k.get("score", 1.0) >= MIN_SCORE:
+            kp[k["part"]] = k["position"]
+
+    targets = compute_targets(kp) if kp else {}
+    for name, value in targets.items():
+        old = current_pose.get(name, value)
+        current_pose[name] = SMOOTHING * value + (1.0 - SMOOTHING) * old
+
     conversion_status = "No Keypoints"
-    
-    if len(keypoints) > 0 and elbow_joint_id != -1:
-        try:
-            if 'leftShoulder' in keypoints and 'leftElbow' in keypoints and 'leftWrist' in keypoints:
-                elbow_angle = calculate_angle(
-                    keypoints['leftShoulder'], 
-                    keypoints['leftElbow'], 
-                    keypoints['leftWrist']
-                )
-                
-                qpos_adr = model.jnt_qposadr[elbow_joint_id]
-                data.qpos[qpos_adr] = elbow_angle
-                conversion_status = f"Successfully mapped to joint '{elbow_joint_name}'"
-                mapped_frames_count += 1
-        except Exception as e:
-            conversion_status = f"Error during conversion: {e}"
+    if targets:
+        conversion_status = f"Mapped {len(targets)} joints"
+        mapped_frames_count += 1
 
-    # --- Apply Slow Z-Axis Rotation (Yaw) ---
-    current_z_angle += rotation_speed_per_frame
-    q_w = np.cos(current_z_angle / 2.0)
-    q_z = np.sin(current_z_angle / 2.0)
-    
-    try:
-        # Assuming model root uses a free joint (index 0) layout: [x, y, z, qw, qx, qy, qz]
-        root_addr = model.jnt_qposadr[0]
-        data.qpos[root_addr + 3] = q_w  # w component
-        data.qpos[root_addr + 4] = 0.0  # x component
-        data.qpos[root_addr + 5] = 0.0  # y component
-        data.qpos[root_addr + 6] = q_z  # z component (yaw rotation)
-    except Exception as rot_err:
-        # Fallback if model joint structure differs
-        pass
+    # Write all joint angles into qpos
+    data.qpos[:] = model.qpos0
+    for name, value in current_pose.items():
+        jid = joint_id(name)
+        data.qpos[model.jnt_qposadr[jid]] = clamp_to_joint_range(jid, value)
 
-    # Advance the MuJoCo physics solver forward
+    # Slow turn about the vertical (world Z) axis
+    turn_angle += TURN_SPEED_PER_FRAME
+    data.qpos[model.jnt_qposadr[TURN_JOINT]] = turn_angle
+
+    # Keep the lowest foot on the floor (squats lower the pelvis instead of floating)
     mujoco.mj_forward(model, data)
-    
-    # Render off-screen scene to pixels
-    renderer.update_scene(data)
+    lowest_foot = min(data.xpos[b][2] for b in FOOT_BODIES)
+    data.qpos[model.jnt_qposadr[LIFT_JOINT]] += REST_FOOT_Z - lowest_foot
+    mujoco.mj_forward(model, data)
+
+    renderer.update_scene(data, camera=cam)
     pixels = renderer.render()
-    
-    # Convert RGB to BGR and write frame
-    frame_bgr = cv2.cvtColor(pixels, cv2.COLOR_RGB2BGR)
-    out.write(frame_bgr)
-    
-    # Enforce an explicit 200 ms execution delay per frame
-    time.sleep(0.2)
-    
+    out.write(cv2.cvtColor(pixels, cv2.COLOR_RGB2BGR))
+
+    if PREVIEW_DELAY_SEC > 0:
+        time.sleep(PREVIEW_DELAY_SEC)
+
     frame_duration_ms = (time.time() - frame_start_time) * 1000
-    
     if i == 0 or (i + 1) % 10 == 0 or (i + 1) == len(motion_data):
         print(f"[Frame {i+1}/{len(motion_data)}] Status: {conversion_status} | Frame Duration: {frame_duration_ms:.2f} ms")
 
@@ -174,4 +260,4 @@ print("\n=== SIMULATION COMPLETE ===")
 print(f"Total Frames Processed: {len(motion_data)}")
 print(f"Successfully Mapped Motion Frames: {mapped_frames_count}")
 print(f"Total Processing Time: {total_elapsed:.2f} seconds")
-print("Output Video Saved Successfully as: musculoskeletal_output.mp4 (at 5 FPS / 200ms per frame + Z-Axis Rotation)")
+print(f"Output Video Saved Successfully as: {OUTPUT_VIDEO} ({TARGET_FPS} FPS, turning about the vertical Z axis)")
