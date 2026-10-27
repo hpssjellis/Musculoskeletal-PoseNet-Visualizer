@@ -3,10 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MS-BioActuator 3D & PoseNet Motion Recorder v012</title>
+    <title>MS-BioActuator 3D & PoseNet Motion Recorder v013</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
+    <!--
+      POSSIBLE CHANGE LATER (pose estimator + fully local use)
+      1. Everything here runs in the browser, but the libraries below come from a CDN and PoseNet
+         downloads its weights from Google storage on first load. To work fully offline: save
+         tf.min.js and posenet.min.js next to this page, download the PoseNet weights, and pass
+         { modelUrl: 'models/model-stride16.json' } inside posenet.load(...).
+      2. PoseNet gives only 17 flat (2D) points. A better estimator for the Python side is
+         MediaPipe BlazePose (33 landmarks incl. heels, toes, hands, plus 3D coordinates in metres).
+         It also runs locally, even directly in Python on a saved video, which would remove the
+         JSON step. If this page is switched later, keep the same frame layout
+         { time, keypoints: [ { part, position: {x, y}, score } ] } and add z, so run_simulation.py
+         only needs a few new joint mappings.
+    -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
 
@@ -42,7 +55,7 @@
             </div>
             <div>
                 <h1 class="text-lg font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    MS-BioActuator 3D & PoseNet Recorder <span class="text-xs font-mono text-slate-500">v012</span>
+                    MS-BioActuator 3D & PoseNet Recorder <span class="text-xs font-mono text-slate-500">v013</span>
                 </h1>
                 <p class="text-xs text-slate-400">Real-Time Musculoskeletal Visualizer & JSON Motion Capture</p>
             </div>
@@ -66,11 +79,16 @@
         </div>
     </header>
 
+    <div class="shrink-0 px-6 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-[11px] text-amber-200 flex items-center gap-2 z-20">
+        <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+        <span>This page is a <strong>rough pose capture</strong> only (flat 2D PoseNet points, low resolution). The real work is done by the Python program <span class="font-mono">run_simulation.py</span>, which turns the saved JSON into the MuJoCo muscle video (<span class="font-mono">musculoskeletal_output.mp4</span>).</span>
+    </div>
+
     <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 min-h-0 relative">
 
         <div class="lg:col-span-4 flex flex-col gap-4 min-h-0 h-full overflow-y-auto">
 
-            <div class="glass-panel rounded-2xl p-3 flex flex-col relative overflow-hidden shrink-0 h-[280px]">
+            <div class="glass-panel rounded-2xl p-3 flex flex-col relative overflow-hidden shrink-0 h-[340px]">
                 <div class="flex justify-between items-center mb-2 px-1">
                     <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                         <i class="fa-solid fa-camera text-indigo-400"></i> PoseNet Input Stream
@@ -82,7 +100,7 @@
 
                 <div class="relative w-full flex-1 bg-black/60 rounded-xl overflow-hidden flex items-center justify-center border border-slate-800/80">
                     <video id="webcam-video" class="hidden" width="640" height="480" playsinline muted></video>
-                    <canvas id="pose-canvas" class="absolute w-full h-full object-cover mirror z-10"></canvas>
+                    <canvas id="pose-canvas" class="absolute w-full h-full object-contain mirror z-10"></canvas>
 
                     <div id="video-placeholder" class="text-center p-6 text-slate-500 flex flex-col items-center gap-3">
                         <i class="fa-solid fa-user-gear text-4xl text-slate-600 animate-bounce"></i>
@@ -100,6 +118,17 @@
                         Keypoints
                     </label>
                 </div>
+                <div class="mt-1.5 flex items-center justify-between gap-2 px-1 text-xs">
+                    <label class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
+                        <input type="checkbox" id="toggle-mirror" checked onclick="myToggleMirror(this.checked)" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
+                        Mirror image
+                    </label>
+                    <label id="portrait-label" class="flex items-center gap-2 cursor-pointer text-slate-300 hover:text-white transition">
+                        <input type="checkbox" id="toggle-portrait" onclick="myTogglePortrait(this.checked)" class="rounded bg-slate-800 border-slate-700 text-indigo-600 focus:ring-indigo-500">
+                        Portrait canvas
+                    </label>
+                </div>
+                <p class="mt-1 px-1 text-[10px] text-slate-500 leading-snug">Mirror only changes the display; the saved JSON is always the un-mirrored camera image. Portrait crops the centre of the camera picture to 3:4 and PoseNet then sees that crop (locked while recording).</p>
             </div>
 
             <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
@@ -114,6 +143,7 @@
                         <i class="fa-solid fa-download mr-1"></i> Save JSON
                     </button>
                 </div>
+                <p class="text-[10px] text-slate-500 leading-snug">Rough capture. Put the saved <span class="font-mono">pose_motion_data.json</span> next to <span class="font-mono">run_simulation.py</span> and run it on your computer to create the MP4.</p>
                 <div id="rec-status" class="text-[11px] font-mono text-slate-400 text-center bg-slate-900/60 p-1.5 rounded-lg border border-slate-800">
                     Status: Recorder Idle
                 </div>
@@ -272,6 +302,7 @@
             lastPose: null,
             showSkeleton: true,
             showPoints: true,
+            portrait: false,
             heatmap: true,
             plane: 'frontal',
             preset: 'idle',
@@ -408,6 +439,7 @@
             myState.recStart = performance.now();
             document.getElementById('startRecBtn').disabled = true;
             document.getElementById('stopRecBtn').disabled = false;
+            document.getElementById('toggle-portrait').disabled = true;
             myRecEl.innerText = 'Status: Recording frames...';
         }
 
@@ -415,6 +447,7 @@
             myState.recording = false;
             document.getElementById('startRecBtn').disabled = false;
             document.getElementById('stopRecBtn').disabled = true;
+            document.getElementById('toggle-portrait').disabled = false;
             myRecEl.innerText = `Status: Saved ${myState.frames.length} frames!`;
 
             if (myState.frames.length > 0) {
@@ -739,13 +772,32 @@
             }
         }
 
+        const myCropCanvas = document.createElement('canvas');
+
+        function myGetSourceRect() {
+            const vw = myVideo.videoWidth, vh = myVideo.videoHeight;
+            if (!myState.portrait || vh >= vw) return { sx: 0, sy: 0, sw: vw, sh: vh };
+            const sw = Math.round(vh * 3 / 4);
+            return { sx: Math.round((vw - sw) / 2), sy: 0, sw: sw, sh: vh };
+        }
+
+        function myToggleMirror(on) {
+            myCanvas.classList.toggle('mirror', on);
+        }
+
+        function myTogglePortrait(on) {
+            myState.portrait = on;
+            myState.lastPose = null;
+        }
+
         function myDrawCanvas() {
             if (!myState.cameraOn || myVideo.readyState < 2 || !myVideo.videoWidth) return;
-            if (myCanvas.width !== myVideo.videoWidth) {
-                myCanvas.width = myVideo.videoWidth;
-                myCanvas.height = myVideo.videoHeight;
+            const myR = myGetSourceRect();
+            if (myCanvas.width !== myR.sw || myCanvas.height !== myR.sh) {
+                myCanvas.width = myR.sw;
+                myCanvas.height = myR.sh;
             }
-            myCtx.drawImage(myVideo, 0, 0, myCanvas.width, myCanvas.height);
+            myCtx.drawImage(myVideo, myR.sx, myR.sy, myR.sw, myR.sh, 0, 0, myCanvas.width, myCanvas.height);
 
             const myPose = myState.lastPose;
             if (!myPose) return;
@@ -779,7 +831,15 @@
         async function myRunPoseNet() {
             myState.busy = true;
             try {
-                const myPose = await myState.net.estimateSinglePose(myVideo, { flipHorizontal: false });
+                let myInput = myVideo;
+                if (myState.portrait) {
+                    const myR = myGetSourceRect();
+                    myCropCanvas.width = myR.sw;
+                    myCropCanvas.height = myR.sh;
+                    myCropCanvas.getContext('2d').drawImage(myVideo, myR.sx, myR.sy, myR.sw, myR.sh, 0, 0, myR.sw, myR.sh);
+                    myInput = myCropCanvas;
+                }
+                const myPose = await myState.net.estimateSinglePose(myInput, { flipHorizontal: false });
                 if (!myState.cameraOn) return;
                 myState.lastPose = myPose;
 
