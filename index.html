@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MS-BioActuator 3D & PoseNet Motion Recorder</title>
+    <title>MS-BioActuator 3D & PoseNet Motion Recorder v012</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
@@ -42,7 +42,7 @@
             </div>
             <div>
                 <h1 class="text-lg font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    MS-BioActuator 3D & PoseNet Recorder
+                    MS-BioActuator 3D & PoseNet Recorder <span class="text-xs font-mono text-slate-500">v012</span>
                 </h1>
                 <p class="text-xs text-slate-400">Real-Time Musculoskeletal Visualizer & JSON Motion Capture</p>
             </div>
@@ -56,6 +56,7 @@
                 </div>
                 <span class="text-slate-600">|</span>
                 <span class="text-slate-400">FPS: <strong id="fps-counter" class="text-indigo-400 font-mono">00</strong></span>
+                <span class="text-slate-400">Pose: <strong id="pose-fps" class="text-emerald-400 font-mono">00</strong></span>
             </div>
 
             <button id="toggle-camera-btn" onclick="myToggleCamera()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs px-4 py-2 rounded-lg shadow-lg shadow-indigo-600/20 transition duration-200">
@@ -80,7 +81,7 @@
                 </div>
 
                 <div class="relative w-full flex-1 bg-black/60 rounded-xl overflow-hidden flex items-center justify-center border border-slate-800/80">
-                    <video id="webcam-video" class="absolute w-px h-px opacity-0 pointer-events-none" playsinline muted></video>
+                    <video id="webcam-video" class="hidden" width="640" height="480" playsinline muted></video>
                     <canvas id="pose-canvas" class="absolute w-full h-full object-cover mirror z-10"></canvas>
 
                     <div id="video-placeholder" class="text-center p-6 text-slate-500 flex flex-col items-center gap-3">
@@ -179,11 +180,25 @@
                 </div>
 
                 <div class="flex items-center justify-between border-t border-slate-800/80 pt-2.5 mt-1">
+                    <span class="text-xs text-slate-300">PoseNet Quality</span>
+                    <select id="quality-select" onchange="myLoadModel(this.value)" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
+                        <option value="fast">Fast</option>
+                        <option value="balanced" selected>Balanced</option>
+                        <option value="accurate">Accurate</option>
+                    </select>
+                </div>
+
+                <div class="flex items-center justify-between">
                     <span class="text-xs text-slate-300">Camera Motion Plane</span>
                     <select id="plane-select" onchange="myState.plane = this.value" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
                         <option value="frontal">Front view (arms/legs out)</option>
                         <option value="sagittal">Side view (arms/legs forward)</option>
                     </select>
+                </div>
+
+                <div class="flex items-center justify-between gap-3">
+                    <span class="text-xs text-slate-300 shrink-0">Smooth &lt;-&gt; Snappy</span>
+                    <input type="range" min="2" max="20" value="8" oninput="myState.easeRate = +this.value" class="w-32 accent-indigo-500">
                 </div>
 
                 <div class="flex items-center justify-between">
@@ -232,6 +247,23 @@
     </main>
 
     <script>
+        const myMinDraw = 0.15;
+        const myMinAngle = 0.3;
+
+        const myRest = {
+            leftElbow: 180, rightElbow: 180,
+            leftKnee: 180, rightKnee: 180,
+            leftShoulder: 0, rightShoulder: 0,
+            leftHip: 0, rightHip: 0,
+            trunkLean: 0, headTilt: 0, headTurn: 0
+        };
+
+        const myQualities = {
+            fast: { multiplier: 0.75, inputResolution: 250 },
+            balanced: { multiplier: 0.75, inputResolution: 400 },
+            accurate: { multiplier: 1.0, inputResolution: 500 }
+        };
+
         const myState = {
             net: null,
             stream: null,
@@ -245,17 +277,17 @@
             preset: 'idle',
             presetPlane: 'frontal',
             presetFrame: 0,
+            easeRate: 8,
+            fps: 60,
+            poseFps: 0,
             lastTime: performance.now(),
+            lastUi: 0,
+            lastPoseTime: 0,
             recording: false,
             frames: [],
             recStart: 0,
-            angles: {
-                leftElbow: 180, rightElbow: 180,
-                leftKnee: 180, rightKnee: 180,
-                leftShoulder: 0, rightShoulder: 0,
-                leftHip: 0, rightHip: 0,
-                trunkLean: 0, headTilt: 0, headTurn: 0
-            }
+            angles: Object.assign({}, myRest),
+            target: Object.assign({}, myRest)
         };
 
         const myVideo = document.getElementById('webcam-video');
@@ -266,6 +298,7 @@
         const myStatusText = document.getElementById('status-text');
         const myStatusDot = document.getElementById('status-indicator');
         const myFpsEl = document.getElementById('fps-counter');
+        const myPoseFpsEl = document.getElementById('pose-fps');
         const myScoreEl = document.getElementById('confidence-score');
         const myPlaceholder = document.getElementById('video-placeholder');
         const myRecEl = document.getElementById('rec-status');
@@ -284,23 +317,28 @@
             headTurn: document.getElementById('angle-head-turn')
         };
 
-        async function myInitPoseNet() {
+        function myStatus(text, color) {
+            myStatusText.innerText = text;
+            myStatusDot.classList.remove('bg-amber-500', 'bg-emerald-500', 'bg-rose-500');
+            myStatusDot.classList.add(color);
+        }
+
+        async function myLoadModel(quality) {
+            while (myState.busy) await new Promise(r => setTimeout(r, 30));
+            if (myState.net) {
+                myState.net.dispose();
+                myState.net = null;
+            }
             try {
-                myStatusText.innerText = 'Loading PoseNet...';
-                myState.net = await posenet.load({
-                    architecture: 'MobileNetV1',
-                    outputStride: 16,
-                    inputResolution: { width: 320, height: 240 },
-                    multiplier: 0.75
-                });
-                myStatusText.innerText = 'PoseNet Ready';
-                myStatusDot.classList.remove('bg-amber-500');
-                myStatusDot.classList.add('bg-emerald-500');
+                myStatus('Loading PoseNet...', 'bg-amber-500');
+                myState.net = await posenet.load(Object.assign(
+                    { architecture: 'MobileNetV1', outputStride: 16, quantBytes: 2 },
+                    myQualities[quality]
+                ));
+                myStatus('PoseNet Ready (' + quality + ')', 'bg-emerald-500');
             } catch (err) {
                 console.error('Failed to load PoseNet:', err);
-                myStatusText.innerText = 'Model Load Failed';
-                myStatusDot.classList.remove('bg-amber-500');
-                myStatusDot.classList.add('bg-rose-500');
+                myStatus('Model Load Failed', 'bg-rose-500');
             }
         }
 
@@ -315,15 +353,22 @@
         async function myStartCamera() {
             try {
                 myState.stream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: 640, height: 480 },
+                    video: { facingMode: 'user', width: 640, height: 480 },
                     audio: false
                 });
                 myVideo.srcObject = myState.stream;
+                await new Promise(resolve => { myVideo.onloadedmetadata = resolve; });
                 await myVideo.play();
+
+                // PoseNet reads video.width / video.height (not videoWidth). If they are 0
+                // every keypoint is scaled to (0,0) and the skeleton never appears.
+                myVideo.width = myVideo.videoWidth;
+                myVideo.height = myVideo.videoHeight;
 
                 myPlaceholder.classList.add('hidden');
                 myState.cameraOn = true;
                 myState.preset = null;
+                myState.lastPoseTime = 0;
                 myUpdatePresetButtons(null);
 
                 myCamBtnText.innerText = 'Stop Camera';
@@ -531,7 +576,13 @@
                 new THREE.MeshStandardMaterial({ color: 0x06b6d4, roughness: 0.3, emissive: 0x0284c7, emissiveIntensity: 0.2 })
             );
             myScene.add(myMesh);
-            myMuscles.push({ name: name, mesh: myMesh, anchorA: myAnchorA, anchorB: myAnchorB });
+            myMuscles.push({
+                name: name,
+                side: name.includes('Left') ? 'left' : 'right',
+                mesh: myMesh,
+                anchorA: myAnchorA,
+                anchorB: myAnchorB
+            });
         }
 
         function mySetupMuscles() {
@@ -549,29 +600,33 @@
             }
         }
 
+        const myPointA = new THREE.Vector3();
+        const myPointB = new THREE.Vector3();
+        const myColorRest = new THREE.Color(0x06b6d4);
+        const myColorHot = new THREE.Color(0xef4444);
+        const myColorMix = new THREE.Color();
+
         function myUpdateMuscles() {
-            const myA = new THREE.Vector3(), myB = new THREE.Vector3();
             const a = myState.angles;
             myMuscles.forEach(m => {
-                m.anchorA.getWorldPosition(myA);
-                m.anchorB.getWorldPosition(myB);
-                m.mesh.position.copy(myA).add(myB).multiplyScalar(0.5);
-                m.mesh.scale.set(1, myA.distanceTo(myB), 1);
-                m.mesh.lookAt(myB);
+                m.anchorA.getWorldPosition(myPointA);
+                m.anchorB.getWorldPosition(myPointB);
+                m.mesh.position.copy(myPointA).add(myPointB).multiplyScalar(0.5);
+                m.mesh.scale.set(1, myPointA.distanceTo(myPointB), 1);
+                m.mesh.lookAt(myPointB);
                 m.mesh.rotateX(Math.PI / 2);
 
-                const mySide = m.name.includes('Left') ? 'left' : 'right';
                 let myTension = 0.2;
-                if (m.name.includes('Bicep')) myTension = Math.max(0, (160 - a[mySide + 'Elbow']) / 120);
-                else if (m.name.includes('Quad')) myTension = Math.max(0, (170 - a[mySide + 'Knee']) / 110);
-                else if (m.name.includes('Deltoid')) myTension = Math.max(0, a[mySide + 'Shoulder'] / 120);
-                else if (m.name.includes('Hip Flexor')) myTension = Math.max(0, a[mySide + 'Hip'] / 90);
-                myTension = Math.min(1, myTension);
+                if (m.name.includes('Bicep')) myTension = (160 - a[m.side + 'Elbow']) / 120;
+                else if (m.name.includes('Quad')) myTension = (170 - a[m.side + 'Knee']) / 110;
+                else if (m.name.includes('Deltoid')) myTension = a[m.side + 'Shoulder'] / 120;
+                else if (m.name.includes('Hip Flexor')) myTension = a[m.side + 'Hip'] / 90;
+                myTension = Math.max(0, Math.min(1, myTension));
 
                 if (myState.heatmap) {
-                    const myColor = new THREE.Color(0x06b6d4).lerp(new THREE.Color(0xef4444), myTension);
-                    m.mesh.material.color.copy(myColor);
-                    m.mesh.material.emissive.copy(myColor);
+                    myColorMix.copy(myColorRest).lerp(myColorHot, myTension);
+                    m.mesh.material.color.copy(myColorMix);
+                    m.mesh.material.emissive.copy(myColorMix);
                     m.mesh.material.emissiveIntensity = 0.1 + myTension * 0.6;
                 } else {
                     m.mesh.material.color.setHex(0x38bdf8);
@@ -620,6 +675,13 @@
             myUpdateMuscles();
         }
 
+        function myEase(dt) {
+            const myK = 1 - Math.exp(-myState.easeRate * dt);
+            for (const key in myState.angles) {
+                myState.angles[key] += (myState.target[key] - myState.angles[key]) * myK;
+            }
+        }
+
         function myAngle(p1, p2, p3) {
             if (!p1 || !p2 || !p3) return null;
             const ax = p1.x - p2.x, ay = p1.y - p2.y;
@@ -630,15 +692,15 @@
             return Math.acos(myCos) * 180 / Math.PI;
         }
 
-        function mySmooth(key, value) {
+        function myAim(key, value) {
             if (value === null || isNaN(value)) return;
-            myState.angles[key] += (value - myState.angles[key]) * 0.5;
+            myState.target[key] = value;
         }
 
         function myGetPoints(keypoints) {
             const myPoints = {};
             keypoints.forEach(k => {
-                if (k.score >= 0.3) myPoints[k.part] = k.position;
+                if (k.score >= myMinAngle) myPoints[k.part] = k.position;
             });
             return myPoints;
         }
@@ -647,11 +709,11 @@
             const p = myGetPoints(keypoints);
 
             ['left', 'right'].forEach(side => {
-                mySmooth(side + 'Elbow', myAngle(p[side + 'Shoulder'], p[side + 'Elbow'], p[side + 'Wrist']));
-                mySmooth(side + 'Knee', myAngle(p[side + 'Hip'], p[side + 'Knee'], p[side + 'Ankle']));
-                mySmooth(side + 'Shoulder', myAngle(p[side + 'Hip'], p[side + 'Shoulder'], p[side + 'Elbow']));
+                myAim(side + 'Elbow', myAngle(p[side + 'Shoulder'], p[side + 'Elbow'], p[side + 'Wrist']));
+                myAim(side + 'Knee', myAngle(p[side + 'Hip'], p[side + 'Knee'], p[side + 'Ankle']));
+                myAim(side + 'Shoulder', myAngle(p[side + 'Hip'], p[side + 'Shoulder'], p[side + 'Elbow']));
                 const myHipAngle = myAngle(p[side + 'Shoulder'], p[side + 'Hip'], p[side + 'Knee']);
-                mySmooth(side + 'Hip', myHipAngle === null ? null : 180 - myHipAngle);
+                myAim(side + 'Hip', myHipAngle === null ? null : 180 - myHipAngle);
             });
 
             if (p.leftShoulder && p.rightShoulder && p.leftHip && p.rightHip) {
@@ -659,24 +721,22 @@
                 const myTopY = (p.leftShoulder.y + p.rightShoulder.y) / 2;
                 const myBotX = (p.leftHip.x + p.rightHip.x) / 2;
                 const myBotY = (p.leftHip.y + p.rightHip.y) / 2;
-                mySmooth('trunkLean', Math.atan2(myTopX - myBotX, -(myTopY - myBotY)) * 180 / Math.PI);
+                myAim('trunkLean', Math.atan2(myTopX - myBotX, -(myTopY - myBotY)) * 180 / Math.PI);
             }
 
             const myL = (p.leftEar && p.rightEar) ? p.leftEar : p.leftEye;
             const myR = (p.leftEar && p.rightEar) ? p.rightEar : p.rightEye;
             if (myL && myR) {
                 const myRoll = Math.atan2(myL.y - myR.y, myL.x - myR.x) * 180 / Math.PI;
-                mySmooth('headTilt', myRoll - myState.angles.trunkLean);
+                myAim('headTilt', myRoll - myState.target.trunkLean);
             }
 
             if (p.nose && p.leftEye && p.rightEye) {
                 const myEyeMid = (p.leftEye.x + p.rightEye.x) / 2;
                 const myEyeDist = Math.abs(p.leftEye.x - p.rightEye.x) || 1;
                 const myRatio = Math.max(-1, Math.min(1, (p.nose.x - myEyeMid) / (myEyeDist * 0.9)));
-                mySmooth('headTurn', Math.asin(myRatio) * 180 / Math.PI);
+                myAim('headTurn', Math.asin(myRatio) * 180 / Math.PI);
             }
-
-            myUpdateUI();
         }
 
         function myDrawCanvas() {
@@ -690,23 +750,27 @@
             const myPose = myState.lastPose;
             if (!myPose) return;
 
+            myCtx.lineCap = 'round';
             if (myState.showSkeleton) {
-                posenet.getAdjacentKeyPoints(myPose.keypoints, 0.3).forEach(pair => {
+                posenet.getAdjacentKeyPoints(myPose.keypoints, myMinDraw).forEach(pair => {
                     myCtx.beginPath();
                     myCtx.moveTo(pair[0].position.x, pair[0].position.y);
                     myCtx.lineTo(pair[1].position.x, pair[1].position.y);
                     myCtx.lineWidth = 5;
-                    myCtx.strokeStyle = '#818cf8';
+                    myCtx.strokeStyle = '#22d3ee';
                     myCtx.stroke();
                 });
             }
             if (myState.showPoints) {
                 myPose.keypoints.forEach(kp => {
-                    if (kp.score > 0.3) {
+                    if (kp.score >= myMinDraw) {
                         myCtx.beginPath();
                         myCtx.arc(kp.position.x, kp.position.y, 6, 0, 2 * Math.PI);
                         myCtx.fillStyle = '#f43f5e';
                         myCtx.fill();
+                        myCtx.lineWidth = 2;
+                        myCtx.strokeStyle = '#ffffff';
+                        myCtx.stroke();
                     }
                 });
             }
@@ -718,12 +782,20 @@
                 const myPose = await myState.net.estimateSinglePose(myVideo, { flipHorizontal: false });
                 if (!myState.cameraOn) return;
                 myState.lastPose = myPose;
-                myScoreEl.innerText = `Score: ${myPose.score.toFixed(2)}`;
+
+                const myNow = performance.now();
+                if (myState.lastPoseTime) {
+                    myState.poseFps += (1000 / (myNow - myState.lastPoseTime) - myState.poseFps) * 0.2;
+                }
+                myState.lastPoseTime = myNow;
+
+                const myVisible = myPose.keypoints.filter(k => k.score >= myMinDraw).length;
+                myScoreEl.innerText = `Score: ${myPose.score.toFixed(2)} | ${myVisible}/17 pts`;
                 myExtractKinematics(myPose.keypoints);
 
                 if (myState.recording && myPose.score > 0.3) {
                     myState.frames.push({
-                        time: (performance.now() - myState.recStart) / 1000,
+                        time: (myNow - myState.recStart) / 1000,
                         keypoints: myPose.keypoints
                     });
                     myRecEl.innerText = `Recording... Frames: ${myState.frames.length}`;
@@ -739,13 +811,11 @@
             myState.presetFrame += 0.04;
             const t = myState.presetFrame;
             const s = (Math.sin(t) + 1) / 2;
-            const a = myState.angles;
+            const a = myState.target;
 
+            Object.assign(a, myRest);
             a.leftElbow = 175; a.rightElbow = 175;
             a.leftKnee = 175; a.rightKnee = 175;
-            a.leftShoulder = 0; a.rightShoulder = 0;
-            a.leftHip = 0; a.rightHip = 0;
-            a.trunkLean = 0; a.headTilt = 0; a.headTurn = 0;
 
             if (myState.preset === 'idle') {
                 a.leftShoulder = 90 + Math.sin(t) * 3;
@@ -759,13 +829,14 @@
                 a.rightElbow = 170 - s * 125;
             }
             myScoreEl.innerText = 'Preset Active';
-            myUpdateUI();
         }
 
         function myUpdateUI() {
             for (const key in myAngleEls) {
                 myAngleEls[key].innerText = `${Math.round(myState.angles[key])}°`;
             }
+            myFpsEl.innerText = Math.round(myState.fps).toString().padStart(2, '0');
+            myPoseFpsEl.innerText = Math.round(myState.poseFps).toString().padStart(2, '0');
         }
 
         function mySetPreset(key) {
@@ -790,8 +861,9 @@
         function myAnimate() {
             requestAnimationFrame(myAnimate);
             const myNow = performance.now();
-            myFpsEl.innerText = Math.round(1000 / (myNow - myState.lastTime)).toString().padStart(2, '0');
+            const myDt = Math.min(0.1, (myNow - myState.lastTime) / 1000) || 0.016;
             myState.lastTime = myNow;
+            myState.fps += (1 / myDt - myState.fps) * 0.1;
 
             if (myState.cameraOn) {
                 myDrawCanvas();
@@ -800,7 +872,14 @@
                 mySynthesizePreset();
             }
 
+            myEase(myDt);
             mySync3D();
+
+            if (myNow - myState.lastUi > 100) {
+                myState.lastUi = myNow;
+                myUpdateUI();
+            }
+
             myControls.update();
             myRenderer.render(myScene, myCamera);
         }
@@ -808,7 +887,7 @@
         window.onload = function () {
             myInitThree();
             myAnimate();
-            myInitPoseNet();
+            myLoadModel('balanced');
         };
     </script>
 </body>
