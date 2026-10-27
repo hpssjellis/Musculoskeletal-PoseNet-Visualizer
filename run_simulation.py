@@ -31,9 +31,10 @@ MOTION_PLANE = "frontal"
 
 TURN_SPEED_PER_FRAME = 0.03        # radians per frame, spin about the VERTICAL (world Z) axis
 MIN_SCORE = 0.3                    # ignore PoseNet keypoints below this confidence
-SMOOTHING = 0.6                    # 1.0 = no smoothing, lower = smoother but laggier
+SMOOTH_SIGMA = 1.5                 # smoothing in frames (0 = off, bigger = smoother)
+SHOW_MUSCLES = True                # False hides the red muscles so the bones are easier to see
 
-print("=== STARTING SIMULATION PIPELINE ===")
+print("=== STARTING SIMULATION PIPELINE (v012) ===")
 
 # =============================================================================
 # 1. MODEL SETUP
@@ -87,23 +88,22 @@ if TURN_JOINT == -1 or LIFT_JOINT == -1:
 
 FOOT_BODIES = [b for b in (body_id(n) for n in ("calcn_r", "calcn_l", "toes_r", "toes_l")) if b != -1]
 
-# Every joint we drive (PoseNet has 17 keypoints, so these are all the joints it can measure)
+# Every joint PoseNet can measure (17 keypoints -> these joints)
 DRIVEN_JOINTS = [
     "elbow_flexion_r", "elbow_flexion_l",
     "knee_angle_r", "knee_angle_l",
     "shoulder_elv_r", "shoulder_elv_l", "elv_angle_r", "elv_angle_l",
     "hip_flexion_r", "hip_flexion_l", "hip_adduction_r", "hip_adduction_l",
-    "L5_S1_LB", "T12_L1_LB", "T1_head_neck_LB",
+    "L5_S1_LB", "T12_L1_LB", "T1_head_neck_LB", "T1_head_neck_AR",
 ]
-print("\n[Joint Mapping] PoseNet -> MS-Human-700 joints:")
-for name in DRIVEN_JOINTS:
-    jid = joint_id(name)
-    print(f"   {'OK     ' if jid != -1 else 'MISSING'} {name}" + (f" (ID {jid})" if jid != -1 else ""))
-DRIVEN_JOINTS = [n for n in DRIVEN_JOINTS if joint_id(n) != -1]
+missing = [n for n in DRIVEN_JOINTS if joint_id(n) == -1]
+print(f"\n[Joint Mapping] {len(DRIVEN_JOINTS) - len(missing)}/{len(DRIVEN_JOINTS)} PoseNet-driven joints found in the model."
+      + (f" Missing: {missing}" if missing else ""))
 
 # Remember how high the feet are in the neutral standing pose, so squats keep feet on the floor
 mujoco.mj_forward(model, data)
 REST_FOOT_Z = min(data.xpos[b][2] for b in FOOT_BODIES)
+
 
 # =============================================================================
 # 4. ANGLE MATH (all angles in 2D image space)
@@ -171,6 +171,13 @@ def compute_targets(kp):
             roll = np.arctan2(kp[l_name]["y"] - kp[r_name]["y"], kp[l_name]["x"] - kp[r_name]["x"])
             t["T1_head_neck_LB"] = -(roll - lean)
             break
+
+    # Head turn from how far the nose sits off-centre between the eyes (+ = face turns to image right)
+    if "nose" in kp and "leftEye" in kp and "rightEye" in kp:
+        eye_mid = (kp["leftEye"]["x"] + kp["rightEye"]["x"]) / 2.0
+        eye_dist = abs(kp["leftEye"]["x"] - kp["rightEye"]["x"]) or 1.0
+        ratio = np.clip((kp["nose"]["x"] - eye_mid) / (eye_dist * 0.9), -1.0, 1.0)
+        t["T1_head_neck_AR"] = float(np.arcsin(ratio))
     return t
 
 
@@ -182,7 +189,57 @@ def clamp_to_joint_range(jid, value):
 
 
 # =============================================================================
-# 5. RENDERER, CAMERA, VIDEO WRITER
+# 5. PASS 1: MEASURE ALL FRAMES, THEN FILL GAPS AND SMOOTH (offline = zero lag)
+# =============================================================================
+def smooth_curve(y):
+    """Fill missing frames (NaN) by interpolation, then Gaussian-smooth with no time lag."""
+    ok = ~np.isnan(y)
+    if not ok.any():
+        return y
+    x = np.arange(len(y))
+    y = np.interp(x, x[ok], y[ok])
+    if SMOOTH_SIGMA <= 0:
+        return y
+    r = int(np.ceil(3 * SMOOTH_SIGMA))
+    kernel = np.exp(-0.5 * (np.arange(-r, r + 1) / SMOOTH_SIGMA) ** 2)
+    kernel /= kernel.sum()
+    return np.convolve(np.pad(y, r, mode="edge"), kernel, mode="valid")
+
+
+def jitter(curves):
+    """Average frame-to-frame wobble (mean absolute second difference) across joints."""
+    vals = [np.mean(np.abs(np.diff(c, 2))) for c in curves if len(c) > 2]
+    return float(np.mean(vals)) if vals else 0.0
+
+
+print("\n[Pass 1] Measuring joint angles from every frame...")
+raw_targets = []
+for frame in motion_data:
+    kp = {}
+    for k in frame.get("keypoints", []):
+        if "part" in k and "position" in k and k.get("score", 1.0) >= MIN_SCORE:
+            kp[k["part"]] = k["position"]
+    raw_targets.append(compute_targets(kp) if kp else {})
+
+frames_with_pose = sum(1 for t in raw_targets if t)
+joint_names = sorted({n for t in raw_targets for n in t if joint_id(n) != -1})
+
+raw_curves, curves = {}, {}
+for name in joint_names:
+    raw_curves[name] = np.array([t.get(name, np.nan) for t in raw_targets], dtype=float)
+    curves[name] = smooth_curve(raw_curves[name])
+
+gaps = sum(int(np.isnan(c).sum()) for c in raw_curves.values())
+print(f"[Pass 1] {frames_with_pose}/{len(motion_data)} frames had a usable pose, {len(joint_names)} joints tracked, "
+      f"{gaps} missing joint-samples filled by interpolation.")
+if joint_names:
+    before = jitter([np.interp(np.arange(len(c)), np.where(~np.isnan(c))[0], c[~np.isnan(c)]) for c in raw_curves.values() if (~np.isnan(c)).any()])
+    after = jitter(list(curves.values()))
+    if before > 0:
+        print(f"[Pass 1] Smoothing reduced frame-to-frame jitter by {100 * (1 - after / before):.0f}%.")
+
+# =============================================================================
+# 6. RENDERER, CAMERA, VIDEO WRITER
 # =============================================================================
 print(f"\n[Renderer] Initializing offscreen renderer ({WIDTH}x{HEIGHT}) and video writer...")
 renderer = mujoco.Renderer(model, height=HEIGHT, width=WIDTH)
@@ -194,43 +251,28 @@ cam.distance = 2.6
 cam.azimuth = 180
 cam.elevation = -8
 
+scene_option = mujoco.MjvOption()
+scene_option.flags[mujoco.mjtVisFlag.mjVIS_TENDON] = SHOW_MUSCLES
+
 out = cv2.VideoWriter(OUTPUT_VIDEO, cv2.VideoWriter_fourcc(*"mp4v"), TARGET_FPS, (WIDTH, HEIGHT))
 if not out.isOpened():
     raise RuntimeError("Could not open the video writer.")
 
-print(f"\n=== STARTING FRAME PROCESSING & CONVERSION (Target Delay: {int(1000 / TARGET_FPS)} ms / frame) ===")
+print(f"\n=== PASS 2: RENDERING (Target Delay: {int(1000 / TARGET_FPS)} ms / frame) ===")
 
 start_time = time.time()
-mapped_frames_count = 0
-current_pose = {}          # smoothed joint angles, persists between frames
 turn_angle = 0.0           # spin about the vertical Z axis
 
 # =============================================================================
-# 6. MAIN LOOP
+# 7. PASS 2: RENDER EVERY FRAME
 # =============================================================================
-for i, frame in enumerate(motion_data):
+for i in range(len(motion_data)):
     frame_start_time = time.time()
 
-    kp = {}
-    for k in frame.get("keypoints", []):
-        if "part" in k and "position" in k and k.get("score", 1.0) >= MIN_SCORE:
-            kp[k["part"]] = k["position"]
-
-    targets = compute_targets(kp) if kp else {}
-    for name, value in targets.items():
-        old = current_pose.get(name, value)
-        current_pose[name] = SMOOTHING * value + (1.0 - SMOOTHING) * old
-
-    conversion_status = "No Keypoints"
-    if targets:
-        conversion_status = f"Mapped {len(targets)} joints"
-        mapped_frames_count += 1
-
-    # Write all joint angles into qpos
     data.qpos[:] = model.qpos0
-    for name, value in current_pose.items():
+    for name in joint_names:
         jid = joint_id(name)
-        data.qpos[model.jnt_qposadr[jid]] = clamp_to_joint_range(jid, value)
+        data.qpos[model.jnt_qposadr[jid]] = clamp_to_joint_range(jid, curves[name][i])
 
     # Slow turn about the vertical (world Z) axis
     turn_angle += TURN_SPEED_PER_FRAME
@@ -242,22 +284,22 @@ for i, frame in enumerate(motion_data):
     data.qpos[model.jnt_qposadr[LIFT_JOINT]] += REST_FOOT_Z - lowest_foot
     mujoco.mj_forward(model, data)
 
-    renderer.update_scene(data, camera=cam)
-    pixels = renderer.render()
-    out.write(cv2.cvtColor(pixels, cv2.COLOR_RGB2BGR))
+    renderer.update_scene(data, camera=cam, scene_option=scene_option)
+    out.write(cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR))
 
     if PREVIEW_DELAY_SEC > 0:
         time.sleep(PREVIEW_DELAY_SEC)
 
     frame_duration_ms = (time.time() - frame_start_time) * 1000
     if i == 0 or (i + 1) % 10 == 0 or (i + 1) == len(motion_data):
-        print(f"[Frame {i+1}/{len(motion_data)}] Status: {conversion_status} | Frame Duration: {frame_duration_ms:.2f} ms")
+        status = f"Mapped {len(raw_targets[i])} joints" if raw_targets[i] else "No keypoints (gap filled)"
+        print(f"[Frame {i+1}/{len(motion_data)}] Status: {status} | Frame Duration: {frame_duration_ms:.2f} ms")
 
 out.release()
 total_elapsed = time.time() - start_time
 
 print("\n=== SIMULATION COMPLETE ===")
 print(f"Total Frames Processed: {len(motion_data)}")
-print(f"Successfully Mapped Motion Frames: {mapped_frames_count}")
+print(f"Successfully Mapped Motion Frames: {frames_with_pose}")
 print(f"Total Processing Time: {total_elapsed:.2f} seconds")
 print(f"Output Video Saved Successfully as: {OUTPUT_VIDEO} ({TARGET_FPS} FPS, turning about the vertical Z axis)")
