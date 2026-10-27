@@ -6,6 +6,11 @@ A real-time biomechanical simulation tool combining PoseNet motion capture with 
 
 Live Web Demo: [Musculoskeletal-PoseNet-Visualizer](https://hpssjellis.github.io/Musculoskeletal-PoseNet-Visualizer/index.html)
 
+
+Main Inspiration from  https://github.com/LNSGroup/MS-Human-700
+
+
+
 ---
 
 ## ⚡ Quick Start Overview
