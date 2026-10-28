@@ -28,19 +28,16 @@ Open **Command Prompt** (`cmd.exe`) and navigate to your project folder:
 Easier just to download the repository unzip it and open the command prompt in the main folder
 
 ```cmd
-:: Find your project folder
 cd C:\path\to\your\project-folder
 ```
 
 Create and activate a Python virtual environment:
 
 ```cmd
-:: Create the virtual environment
 python -m venv venv
 ```
 
 ```cmd
-:: Activate the virtual environment
 venv\Scripts\activate.bat
 ```
 
