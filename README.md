@@ -40,6 +40,7 @@ python -m venv venv
 ```cmd
 venv\Scripts\activate.bat
 ```
+## 🛠️ Step 2: Windows Environment Setup (Only do this the first time)
 
 Install the required Python packages:
 
@@ -62,6 +63,8 @@ python run_simulation.py
 ```
 
 Once completed, open `musculoskeletal_output.mp4` to view your rendered simulation.
+
+Also check out the muscle activation .csv files.
 
 I save it as a new name since the next run will override it.
 
