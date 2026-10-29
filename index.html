@@ -3,24 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MS-BioActuator 3D & PoseNet Motion Recorder v013</title>
+    <title>MS-BioActuator 3D & Pose Motion Recorder v015</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <!--
-      POSSIBLE CHANGE LATER (pose estimator + fully local use)
-      1. Everything here runs in the browser, but the libraries below come from a CDN and PoseNet
-         downloads its weights from Google storage on first load. To work fully offline: save
-         tf.min.js and posenet.min.js next to this page, download the PoseNet weights, and pass
-         { modelUrl: 'models/model-stride16.json' } inside posenet.load(...).
-      2. PoseNet gives only 17 flat (2D) points. A better estimator for the Python side is
-         MediaPipe BlazePose (33 landmarks incl. heels, toes, hands, plus 3D coordinates in metres).
-         It also runs locally, even directly in Python on a saved video, which would remove the
-         JSON step. If this page is switched later, keep the same frame layout
-         { time, keypoints: [ { part, position: {x, y}, score } ] } and add z, so run_simulation.py
-         only needs a few new joint mappings.
+      Two pose engines: PoseNet (2D, 17 points) and MediaPipe BlazePose (3D, 33 landmarks with depth).
+      Everything runs in the browser, but the libraries and model weights come from a CDN on first use.
+      FULLY LOCAL: save the files below next to this page and change the three paths
+      (pose.js src, myMediaPipePath in the script, and for PoseNet: posenet.load({ modelUrl: ... })).
+      The @mediapipe/pose folder needs: pose.js, pose_solution_packed_assets.data, pose_solution_packed_assets_loader.js,
+      pose_solution_simd_wasm_bin.js/.wasm, pose_solution_wasm_bin.js/.wasm, pose_landmark_*.tflite, pose_web.binarypb.
     -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.20.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4.1633558788/pose.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.0.0/dist/pose-detection.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/posenet@2.2.2/dist/posenet.min.js"></script>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -55,7 +52,7 @@
             </div>
             <div>
                 <h1 class="text-lg font-bold bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-                    MS-BioActuator 3D & PoseNet Recorder <span class="text-xs font-mono text-slate-500">v013</span>
+                    MS-BioActuator 3D & Pose Recorder <span class="text-xs font-mono text-slate-500">v015</span>
                 </h1>
                 <p class="text-xs text-slate-400">Real-Time Musculoskeletal Visualizer & JSON Motion Capture</p>
             </div>
@@ -81,7 +78,7 @@
 
     <div class="shrink-0 px-6 py-1.5 bg-amber-500/10 border-b border-amber-500/30 text-[11px] text-amber-200 flex items-center gap-2 z-20">
         <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
-        <span>This page is a <strong>rough pose capture</strong> only (flat 2D PoseNet points, low resolution). The real work is done by the Python program <span class="font-mono">run_simulation.py</span>, which turns the saved JSON into the MuJoCo muscle video (<span class="font-mono">musculoskeletal_output.mp4</span>).</span>
+        <span>This page is a <strong>rough pose capture</strong> only (PoseNet = flat 2D points, BlazePose = 3D with depth; low resolution). The real work is done by the Python program <span class="font-mono">run_simulation.py</span>, which turns the saved JSON into the MuJoCo muscle video (<span class="font-mono">musculoskeletal_output.mp4</span>).</span>
     </div>
 
     <main class="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 min-h-0 relative">
@@ -91,7 +88,7 @@
             <div class="glass-panel rounded-2xl p-3 flex flex-col relative overflow-hidden shrink-0 h-[340px]">
                 <div class="flex justify-between items-center mb-2 px-1">
                     <span class="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                        <i class="fa-solid fa-camera text-indigo-400"></i> PoseNet Input Stream
+                        <i class="fa-solid fa-camera text-indigo-400"></i> <span id="engine-title">PoseNet</span>&nbsp;Input Stream
                     </span>
                     <span id="confidence-score" class="text-[10px] font-mono bg-slate-800 px-2 py-0.5 rounded text-indigo-300">
                         Score: 0.00
@@ -128,7 +125,7 @@
                         Portrait canvas
                     </label>
                 </div>
-                <p class="mt-1 px-1 text-[10px] text-slate-500 leading-snug">Mirror only changes the display; the saved JSON is always the un-mirrored camera image. Portrait crops the centre of the camera picture to 3:4 and PoseNet then sees that crop (locked while recording).</p>
+                <p class="mt-1 px-1 text-[10px] text-slate-500 leading-snug">Mirror only changes the display; the saved JSON is always the un-mirrored camera image. Portrait crops the centre of the camera picture to 3:4 and the pose model then sees that crop (locked while recording).</p>
             </div>
 
             <div class="glass-panel rounded-2xl p-4 flex flex-col gap-3 shrink-0">
@@ -210,16 +207,25 @@
                 </div>
 
                 <div class="flex items-center justify-between border-t border-slate-800/80 pt-2.5 mt-1">
-                    <span class="text-xs text-slate-300">PoseNet Quality</span>
+                    <span class="text-xs text-slate-300">Pose Engine</span>
+                    <select id="engine-select" onchange="mySetEngine(this.value)" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
+                        <option value="posenet" selected>PoseNet (2D)</option>
+                        <option value="blazepose">MediaPipe BlazePose (3D with Depth)</option>
+                    </select>
+                </div>
+                <p id="engine-note" class="text-[10px] text-slate-500 leading-snug">PoseNet: 17 flat points. Switch to BlazePose to record depth (z) so turning sideways and hidden limbs are handled by run_simulation.py. Locked while recording.</p>
+
+                <div class="flex items-center justify-between">
+                    <span id="quality-label" class="text-xs text-slate-300">PoseNet Quality</span>
                     <select id="quality-select" onchange="myLoadModel(this.value)" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
-                        <option value="fast">Fast</option>
-                        <option value="balanced" selected>Balanced</option>
-                        <option value="accurate">Accurate</option>
+                        <option id="quality-fast" value="fast">Fast</option>
+                        <option id="quality-balanced" value="balanced" selected>Balanced</option>
+                        <option id="quality-accurate" value="accurate">Accurate</option>
                     </select>
                 </div>
 
                 <div class="flex items-center justify-between">
-                    <span class="text-xs text-slate-300">Camera Motion Plane</span>
+                    <span class="text-xs text-slate-300">Camera Motion Plane (2D)</span>
                     <select id="plane-select" onchange="myState.plane = this.value" class="bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-lg px-2 py-1">
                         <option value="frontal">Front view (arms/legs out)</option>
                         <option value="sagittal">Side view (arms/legs forward)</option>
@@ -288,6 +294,24 @@
             trunkLean: 0, headTilt: 0, headTurn: 0
         };
 
+        const myMediaPipePath = 'https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.4.1633558788';
+        const myBlazeTypes = { fast: 'lite', balanced: 'full', accurate: 'heavy' };
+        const myBlazeNames = [
+            'nose', 'leftEyeInner', 'leftEye', 'leftEyeOuter', 'rightEyeInner', 'rightEye', 'rightEyeOuter',
+            'leftEar', 'rightEar', 'mouthLeft', 'mouthRight', 'leftShoulder', 'rightShoulder',
+            'leftElbow', 'rightElbow', 'leftWrist', 'rightWrist', 'leftPinky', 'rightPinky',
+            'leftIndex', 'rightIndex', 'leftThumb', 'rightThumb', 'leftHip', 'rightHip',
+            'leftKnee', 'rightKnee', 'leftAnkle', 'rightAnkle', 'leftHeel', 'rightHeel',
+            'leftFootIndex', 'rightFootIndex'
+        ];
+        const myBlazePairs = [
+            [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8], [9, 10],
+            [11, 12], [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+            [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
+            [11, 23], [12, 24], [23, 24], [23, 25], [25, 27], [27, 29], [29, 31], [27, 31],
+            [24, 26], [26, 28], [28, 30], [30, 32], [28, 32]
+        ];
+
         const myQualities = {
             fast: { multiplier: 0.75, inputResolution: 250 },
             balanced: { multiplier: 0.75, inputResolution: 400 },
@@ -295,7 +319,11 @@
         };
 
         const myState = {
+            engine: 'posenet',
             net: null,
+            detector: null,
+            recEngine: 'posenet',
+            recSize: { w: 0, h: 0 },
             stream: null,
             cameraOn: false,
             busy: false,
@@ -354,11 +382,61 @@
             myStatusDot.classList.add(color);
         }
 
+        function myEngineReady() {
+            return myState.engine === 'blazepose' ? myState.detector : myState.net;
+        }
+
+        function myUpdateEngineUi() {
+            const myBlaze = myState.engine === 'blazepose';
+            document.getElementById('engine-title').innerText = myBlaze ? 'BlazePose 3D' : 'PoseNet';
+            document.getElementById('quality-label').innerText = myBlaze ? 'BlazePose Model' : 'PoseNet Quality';
+            document.getElementById('quality-fast').innerText = myBlaze ? 'Lite' : 'Fast';
+            document.getElementById('quality-balanced').innerText = myBlaze ? 'Full' : 'Balanced';
+            document.getElementById('quality-accurate').innerText = myBlaze ? 'Heavy' : 'Accurate';
+            document.getElementById('engine-select').value = myState.engine;
+        }
+
+        async function mySetEngine(myEngine) {
+            if (myState.recording) {
+                document.getElementById('engine-select').value = myState.engine;
+                alert('Stop the recording before switching the pose engine.');
+                return;
+            }
+            myState.engine = myEngine;
+            myState.lastPose = null;
+            myUpdateEngineUi();
+            await myLoadModel(document.getElementById('quality-select').value);
+        }
+
         async function myLoadModel(quality) {
             while (myState.busy) await new Promise(r => setTimeout(r, 30));
             if (myState.net) {
                 myState.net.dispose();
                 myState.net = null;
+            }
+            if (myState.detector) {
+                myState.detector.dispose();
+                myState.detector = null;
+            }
+            myState.lastPose = null;
+            if (myState.engine === 'blazepose') {
+                try {
+                    if (typeof poseDetection === 'undefined') throw new Error('pose-detection library did not load');
+                    myStatus('Loading BlazePose...', 'bg-amber-500');
+                    myState.detector = await poseDetection.createDetector(poseDetection.SupportedModels.BlazePose, {
+                        runtime: 'mediapipe',
+                        modelType: myBlazeTypes[quality],
+                        solutionPath: myMediaPipePath,
+                        enableSmoothing: true
+                    });
+                    myStatus('BlazePose Ready (' + myBlazeTypes[quality] + ')', 'bg-emerald-500');
+                    return;
+                } catch (err) {
+                    console.error('Failed to load BlazePose:', err);
+                    alert('BlazePose could not be loaded (' + err.message + '). Going back to PoseNet.');
+                    myState.engine = 'posenet';
+                    myUpdateEngineUi();
+                }
             }
             try {
                 myStatus('Loading PoseNet...', 'bg-amber-500');
@@ -391,7 +469,7 @@
                 await new Promise(resolve => { myVideo.onloadedmetadata = resolve; });
                 await myVideo.play();
 
-                // PoseNet reads video.width / video.height (not videoWidth). If they are 0
+                // The pose models read video.width / video.height (not videoWidth). If they are 0
                 // every keypoint is scaled to (0,0) and the skeleton never appears.
                 myVideo.width = myVideo.videoWidth;
                 myVideo.height = myVideo.videoHeight;
@@ -435,6 +513,9 @@
                 return;
             }
             myState.frames = [];
+            myState.recEngine = myState.engine;
+            myState.recSize = { w: myCanvas.width, h: myCanvas.height };
+            document.getElementById('engine-select').disabled = true;
             myState.recording = true;
             myState.recStart = performance.now();
             document.getElementById('startRecBtn').disabled = true;
@@ -443,15 +524,52 @@
             myRecEl.innerText = 'Status: Recording frames...';
         }
 
+        function myRound(v, n) {
+            const myP = Math.pow(10, n);
+            return Math.round(v * myP) / myP;
+        }
+
+        function myPackKeypoints(myPose) {
+            if (myState.recEngine !== 'blazepose') {
+                return myPose.keypoints.map(k => ({ part: k.part, position: k.position, score: k.score }));
+            }
+            const myW = myState.recSize.w || 1, myH = myState.recSize.h || 1;
+            return myPose.keypoints.map(k => {
+                const myOut = {
+                    part: k.part,
+                    position: { x: myRound(k.position.x, 1), y: myRound(k.position.y, 1) },
+                    score: myRound(k.score, 3),
+                    normalized: { x: myRound(k.position.x / myW, 4), y: myRound(k.position.y / myH, 4), z: myRound(k.z / myW, 4) }
+                };
+                if (k.world) myOut.world = { x: myRound(k.world.x, 4), y: myRound(k.world.y, 4), z: myRound(k.world.z, 4) };
+                return myOut;
+            });
+        }
+
+        function myMakeFile() {
+            const myBlaze = myState.recEngine === 'blazepose';
+            return {
+                version: 'v015',
+                model: myBlaze ? 'blazepose' : 'posenet',
+                landmarks: myBlaze ? 33 : 17,
+                worldUnits: myBlaze ? 'metres, origin at the hips' : null,
+                imageWidth: myState.recSize.w,
+                imageHeight: myState.recSize.h,
+                mirrored: false,
+                frames: myState.frames
+            };
+        }
+
         function myStopRecording() {
             myState.recording = false;
             document.getElementById('startRecBtn').disabled = false;
             document.getElementById('stopRecBtn').disabled = true;
             document.getElementById('toggle-portrait').disabled = false;
+            document.getElementById('engine-select').disabled = false;
             myRecEl.innerText = `Status: Saved ${myState.frames.length} frames!`;
 
             if (myState.frames.length > 0) {
-                const myBlob = new Blob([JSON.stringify(myState.frames)], { type: 'application/json' });
+                const myBlob = new Blob([JSON.stringify(myMakeFile())], { type: 'application/json' });
                 const myLink = document.createElement('a');
                 myLink.href = URL.createObjectURL(myBlob);
                 myLink.download = 'pose_motion_data.json';
@@ -717,11 +835,13 @@
 
         function myAngle(p1, p2, p3) {
             if (!p1 || !p2 || !p3) return null;
-            const ax = p1.x - p2.x, ay = p1.y - p2.y;
-            const bx = p3.x - p2.x, by = p3.y - p2.y;
-            const myLen = Math.hypot(ax, ay) * Math.hypot(bx, by);
+            const my3d = p1.w && p2.w && p3.w;
+            const a = my3d ? p1.w : p1, b = my3d ? p2.w : p2, c = my3d ? p3.w : p3;
+            const ax = a.x - b.x, ay = a.y - b.y, az = my3d ? a.z - b.z : 0;
+            const bx = c.x - b.x, by = c.y - b.y, bz = my3d ? c.z - b.z : 0;
+            const myLen = Math.hypot(ax, ay, az) * Math.hypot(bx, by, bz);
             if (myLen < 1e-6) return null;
-            const myCos = Math.max(-1, Math.min(1, (ax * bx + ay * by) / myLen));
+            const myCos = Math.max(-1, Math.min(1, (ax * bx + ay * by + az * bz) / myLen));
             return Math.acos(myCos) * 180 / Math.PI;
         }
 
@@ -733,7 +853,7 @@
         function myGetPoints(keypoints) {
             const myPoints = {};
             keypoints.forEach(k => {
-                if (k.score >= myMinAngle) myPoints[k.part] = k.position;
+                if (k.score >= myMinAngle) myPoints[k.part] = k.world ? { x: k.position.x, y: k.position.y, w: k.world } : k.position;
             });
             return myPoints;
         }
@@ -790,6 +910,19 @@
             myState.lastPose = null;
         }
 
+        function myGetPairs(myPose) {
+            if (myState.engine !== 'blazepose') return posenet.getAdjacentKeyPoints(myPose.keypoints, myMinDraw);
+            return myBlazePairs
+                .map(pair => [myPose.keypoints[pair[0]], myPose.keypoints[pair[1]]])
+                .filter(pair => pair[0].score >= myMinDraw && pair[1].score >= myMinDraw);
+        }
+
+        function myDepthColor(kp) {
+            if (kp.z === undefined) return '#f43f5e';
+            const myT = Math.max(0, Math.min(1, 0.5 - 2 * kp.z / myCanvas.width));
+            return `rgb(${Math.round(59 + 185 * myT)}, ${Math.round(130 - 28 * myT)}, ${Math.round(246 - 150 * myT)})`;
+        }
+
         function myDrawCanvas() {
             if (!myState.cameraOn || myVideo.readyState < 2 || !myVideo.videoWidth) return;
             const myR = myGetSourceRect();
@@ -804,7 +937,7 @@
 
             myCtx.lineCap = 'round';
             if (myState.showSkeleton) {
-                posenet.getAdjacentKeyPoints(myPose.keypoints, myMinDraw).forEach(pair => {
+                myGetPairs(myPose).forEach(pair => {
                     myCtx.beginPath();
                     myCtx.moveTo(pair[0].position.x, pair[0].position.y);
                     myCtx.lineTo(pair[1].position.x, pair[1].position.y);
@@ -818,7 +951,7 @@
                     if (kp.score >= myMinDraw) {
                         myCtx.beginPath();
                         myCtx.arc(kp.position.x, kp.position.y, 6, 0, 2 * Math.PI);
-                        myCtx.fillStyle = '#f43f5e';
+                        myCtx.fillStyle = myDepthColor(kp);
                         myCtx.fill();
                         myCtx.lineWidth = 2;
                         myCtx.strokeStyle = '#ffffff';
@@ -828,7 +961,20 @@
             }
         }
 
-        async function myRunPoseNet() {
+        function myBlazeToCommon(myRaw) {
+            const my3d = myRaw.keypoints3D || [];
+            const myKeypoints = myRaw.keypoints.map((k, i) => ({
+                part: myBlazeNames[i],
+                position: { x: k.x, y: k.y },
+                z: k.z,
+                score: k.score === undefined ? 1 : k.score,
+                world: my3d[i] ? { x: my3d[i].x, y: my3d[i].y, z: my3d[i].z } : null
+            }));
+            const myBest = myKeypoints.map(k => k.score).sort((a, b) => b - a).slice(0, 17);
+            return { score: myBest.reduce((a, b) => a + b, 0) / myBest.length, keypoints: myKeypoints };
+        }
+
+        async function myRunPose() {
             myState.busy = true;
             try {
                 let myInput = myVideo;
@@ -839,9 +985,19 @@
                     myCropCanvas.getContext('2d').drawImage(myVideo, myR.sx, myR.sy, myR.sw, myR.sh, 0, 0, myR.sw, myR.sh);
                     myInput = myCropCanvas;
                 }
-                const myPose = await myState.net.estimateSinglePose(myInput, { flipHorizontal: false });
+                let myPose = null;
+                if (myState.engine === 'blazepose') {
+                    const myFound = await myState.detector.estimatePoses(myInput, { flipHorizontal: false });
+                    if (myFound.length) myPose = myBlazeToCommon(myFound[0]);
+                } else {
+                    myPose = await myState.net.estimateSinglePose(myInput, { flipHorizontal: false });
+                }
                 if (!myState.cameraOn) return;
                 myState.lastPose = myPose;
+                if (!myPose) {
+                    myScoreEl.innerText = 'No person found';
+                    return;
+                }
 
                 const myNow = performance.now();
                 if (myState.lastPoseTime) {
@@ -850,13 +1006,13 @@
                 myState.lastPoseTime = myNow;
 
                 const myVisible = myPose.keypoints.filter(k => k.score >= myMinDraw).length;
-                myScoreEl.innerText = `Score: ${myPose.score.toFixed(2)} | ${myVisible}/17 pts`;
+                myScoreEl.innerText = `Score: ${myPose.score.toFixed(2)} | ${myVisible}/${myPose.keypoints.length} pts` + (myState.engine === 'blazepose' ? ' | 3D' : '');
                 myExtractKinematics(myPose.keypoints);
 
                 if (myState.recording && myPose.score > 0.3) {
                     myState.frames.push({
                         time: (myNow - myState.recStart) / 1000,
-                        keypoints: myPose.keypoints
+                        keypoints: myPackKeypoints(myPose)
                     });
                     myRecEl.innerText = `Recording... Frames: ${myState.frames.length}`;
                 }
@@ -927,7 +1083,7 @@
 
             if (myState.cameraOn) {
                 myDrawCanvas();
-                if (myState.net && !myState.busy && myVideo.readyState >= 2) myRunPoseNet();
+                if (myEngineReady() && !myState.busy && myVideo.readyState >= 2) myRunPose();
             } else if (myState.preset) {
                 mySynthesizePreset();
             }
